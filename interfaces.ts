@@ -1,0 +1,153 @@
+export enum ClaudeModel {
+  HAIKU = "claude-3-haiku-20240307",
+  SONNET = "claude-3-sonnet-20240229",
+  OPUS = "claude-3-opus-20240229",
+}
+
+export enum GPTModel {
+  // https://huggingface.co/spaces/lmsys/chatbot-arena-leaderboard
+  GPT35_0613 = "gpt-3.5-turbo-0613",
+  GPT35_0613_16K = "gpt-3.5-turbo-16k-0613",
+  GPT35_0125 = "gpt-3.5-turbo-0125",
+  GPT4_1106_PREVIEW = "gpt-4-1106-preview",
+  GPT4_0125_PREVIEW = "gpt-4-0125-preview",
+}
+
+export interface FunctionDefinition {
+  name: string;
+  description: string;
+  parameters: Record<string, any>;
+}
+
+export interface GenericError {
+  message: string;
+}
+
+export enum ContentType {
+  TEXT = "text",
+  ATTACHMENT = "attachment",
+}
+
+export type AIChainResponse = {
+  content: string | null;
+  contentType?: ContentType;
+  functionCalls: FunctionCall[];
+};
+
+export interface GenericMessage {
+  role: "user" | "assistant" | "system";
+  content: string;
+  url: string;
+}
+
+export interface OpenAIMessage {
+  role: "user" | "assistant" | "system";
+  content: string;
+}
+
+export interface AnthropicAIMessage {
+  role: "user" | "assistant" | "system";
+  content: string | AnthropicContentBlock[];
+}
+
+export type AnthropicContentBlock =
+  | AnthropicTextContentBlock
+  | AnthropicImageContentBlock;
+
+export interface AnthropicTextContentBlock {
+  type: "text";
+  text: string;
+}
+
+export interface AnthropicImageContentBlock {
+  type: "image";
+  source: {
+    type: "base64";
+    media_type: "image/jpeg" | "image/png" | "image/gif" | "image/webp";
+    data: string;
+  };
+}
+
+export interface AnthropicAIPayload {
+  model: ClaudeModel;
+  messages: AnthropicAIMessage[];
+  functions?: any[]; // TODO type this JSON schema
+}
+
+export interface OpenAIResponseMessage {
+  role: "assistant";
+  content: string | null;
+  function_call: {
+    name: string;
+    arguments: string; // unparsed arguments object
+  } | null;
+}
+
+export interface OpenAIParsedResponseMessage {
+  role: "assistant";
+  content: string | null;
+  function_call: FunctionCall | null;
+}
+
+export interface FunctionCall {
+  name: string;
+  arguments: Record<string, any>;
+}
+
+export interface OpenAIResponseMessage {
+  role: "assistant";
+  content: string | null;
+  function_call: {
+    name: string;
+    arguments: string; // unparsed arguments object
+  } | null;
+}
+
+export interface OpenAIParsedResponseMessage {
+  role: "assistant";
+  content: string | null;
+  function_call: FunctionCall | null;
+}
+
+export interface FunctionCall {
+  name: string;
+  arguments: Record<string, any>;
+}
+
+export interface OpenAIConfig {
+  service: "azure" | "openai";
+  apiKey: string;
+  baseUrl: string;
+  orgId?: string;
+  modelConfigMap?: Record<
+    GPTModel,
+    {
+      resource: string;
+      deployment: string;
+      apiVersion: string;
+      apiKey: string;
+    }
+  >;
+}
+
+export interface OpenAIPayload {
+  model: GPTModel;
+  messages: OpenAIMessage[];
+  functions?: any[]; // TODO type this JSON schema
+  function_call?: "none" | "auto" | { name: string };
+  temperature?: number;
+}
+
+export interface OpenAIBody {
+  choices: {
+    message: OpenAIResponseMessage;
+  }[];
+  error?: {
+    code: string;
+  };
+  usage: {
+    completion_tokens: number;
+    prompt_tokens: number;
+    total_tokens: number;
+  };
+}
