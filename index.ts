@@ -3,11 +3,16 @@ import {
   GPTModel,
   OpenAIPayload,
   OpenAIMessage,
-  OpenAIParsedResponseMessage,
   OpenAIConfig,
   AnthropicAIPayload,
   AnthropicAIMessage,
   GenericMessage,
+  AnthropicAIConfig,
+  GenericPayload,
+  GroqPayload,
+  GroqModel,
+  ParsedResponseMessage,
+  FunctionCall,
 } from "./interfaces";
 import {
   BedrockRuntimeClient,
@@ -16,46 +21,166 @@ import {
 import axios from "axios";
 import { timeout } from "./utils";
 
-export function cleanForOpenAI(messages: GenericMessage[]): OpenAIMessage[] {
-  return messages.slice().map((message) => {
-    // Add fn calls to the context when calling OpenAI
-    // let stringifiedFunctionCalls = "";
-    // if (message.functionCalls && message.functionCalls.length > 0) {
-    //   stringifiedFunctionCalls = "\n\n";
-    //   message.functionCalls
-    //     .map((call) => JSON.stringify(call, null, 2))
-    //     .join("\n") || "";
-    // }
+export { ClaudeModel, GPTModel, GroqModel, OpenAIConfig } from "./interfaces";
 
-    // add date and time of each message to prompt
-    // const date = new Date(message.dateSent);
-    // const dateStr = date.toLocaleDateString("en-US", {
-    //   month: "short",
-    //   day: "numeric",
-    //   year: "numeric",
-    // });
-    // const timeStr = date.toLocaleTimeString("en-US", {
-    //   hour: "numeric",
-    //   minute: "numeric",
-    // });
-    // const shortDate = `${dateStr} ${timeStr}`;
+function parseStreamedResponse(
+  identifier: string,
+  paragraph: string,
+  functionCallName: string,
+  functionCallArgs: string,
+  allowedFunctionNames: Set<string> | null
+): ParsedResponseMessage {
+  let functionCall: ParsedResponseMessage["function_call"] = null;
+  if (functionCallName && functionCallArgs) {
+    if (allowedFunctionNames && !allowedFunctionNames.has(functionCallName)) {
+      throw new Error(
+        "Stream error: received function call with unknown name: " +
+          functionCallName
+      );
+    }
 
-    return {
-      role: message.role,
-      content: message.content, // + stringifiedFunctionCalls,
+    functionCall = {
+      name: functionCallName,
+      arguments: JSON.parse(functionCallArgs), // allow JSON.parse to throw
     };
-  });
+  }
+
+  if (!paragraph && !functionCall) {
+    console.error(
+      identifier,
+      "Stream error: received message without content or function_call, raw:",
+      JSON.stringify({ paragraph, functionCallName, functionCallArgs })
+    );
+    throw new Error(
+      "Stream error: received message without content or function_call"
+    );
+  }
+
+  return {
+    role: "assistant",
+    content: paragraph || null,
+    function_call: functionCall,
+  };
+}
+
+async function callOpenAiWithRetries(
+  identifier: string,
+  openAiPayload: OpenAIPayload,
+  openAiConfig?: OpenAIConfig,
+  retries: number = 5,
+  chunkTimeoutMs: number = 15_000
+): Promise<ParsedResponseMessage> {
+  console.log(
+    identifier,
+    "Calling OpenAI API with retries:",
+    openAiConfig?.service,
+    openAiPayload.model,
+    openAiConfig?.baseUrl
+  );
+
+  let errorObj: any;
+  for (let i = 0; i <= retries; i++) {
+    try {
+      const timerId = `timer:${identifier}:${Date.now()}:callOpenAi:${
+        openAiConfig?.service
+      }-${openAiPayload.model}-${openAiConfig?.orgId}`;
+      const res = await callOpenAIStream(
+        identifier,
+        openAiPayload,
+        openAiConfig,
+        chunkTimeoutMs
+      );
+      return res;
+    } catch (error: any) {
+      const errorCode = error.data?.code;
+
+      if (errorCode) {
+        console.error(
+          identifier,
+          `Retry #${i} failed with API error: ${errorCode}`,
+          JSON.stringify({
+            data: error.data,
+          })
+        );
+      }
+
+      // to solve context length issue or JSON parsing error due to truncated response
+      openAiPayload.model = GPTModel.GPT4_1106_PREVIEW;
+      openAiPayload.temperature = 0.8; // Higher temperature
+
+      // on 2nd or more retries
+      // if Azure content policy error is persistent
+      if (
+        i >= 2 &&
+        openAiConfig?.service === "azure" &&
+        errorCode === "content_filter"
+      ) {
+        console.log(
+          identifier,
+          `Switching to OpenAI service due to content filter error`
+        );
+        openAiConfig.service = "openai"; // Move to OpenAI, failed due to Azure content policy
+      }
+
+      // on 3rd retry
+      if (i === 3) {
+        if (openAiConfig?.service === "azure") {
+          openAiConfig.service = "openai";
+        }
+      }
+
+      // on 4th retry
+      if (i === 4) {
+        // abort function calling, e.g. stubborn `python` function call case
+        if (openAiPayload.function_call) {
+          openAiPayload.function_call = "none";
+        }
+      }
+
+      console.error(
+        identifier,
+        `Retrying due to error: received bad response from OpenAI API [${
+          openAiConfig?.service
+        }-${openAiPayload.model}-${openAiConfig?.orgId}]: ${
+          error.message
+        } - ${JSON.stringify(error.response?.data)}`
+      );
+
+      await timeout(250);
+    }
+  }
+
+  console.error(
+    identifier,
+    `Failed to call OpenAI API after ${retries} attempts. Please lookup OpenAI status for active issues.`,
+    errorObj
+  );
+  throw new Error(
+    `${identifier}: Failed to call OpenAI API after ${retries} attempts. Please lookup OpenAI status for active issues.`
+  );
 }
 
 async function callOpenAIStream(
   identifier: string,
   openAiPayload: OpenAIPayload,
-  openAiConfig: OpenAIConfig,
+  openAiConfig: OpenAIConfig | undefined,
   chunkTimeoutMs: number
-): Promise<OpenAIParsedResponseMessage> {
+): Promise<ParsedResponseMessage> {
   const functionNames: Set<string> | null = openAiPayload.functions
     ? new Set(openAiPayload.functions.map((fn) => fn.name as string))
     : null;
+
+  if (!openAiConfig) {
+    const defaultOpenAIBaseUrl = // TODO: Remove this one we have per-provider configs
+      "https://gateway.ai.cloudflare.com/v1/932636fc124abb5171fd630afe668905/igpt";
+    openAiConfig = {
+      service: "openai",
+      apiKey: process.env.OPENAI_API_KEY as string,
+      baseUrl: defaultOpenAIBaseUrl,
+    };
+  }
+
+  console.log("payload", openAiPayload);
 
   let response;
   const controller = new AbortController();
@@ -221,153 +346,13 @@ async function callOpenAIStream(
   }
 }
 
-function parseStreamedResponse(
-  identifier: string,
-  paragraph: string,
-  functionCallName: string,
-  functionCallArgs: string,
-  allowedFunctionNames: Set<string> | null
-): OpenAIParsedResponseMessage {
-  let functionCall: OpenAIParsedResponseMessage["function_call"] = null;
-  if (functionCallName && functionCallArgs) {
-    if (allowedFunctionNames && !allowedFunctionNames.has(functionCallName)) {
-      throw new Error(
-        "Stream error: received function call with unknown name: " +
-          functionCallName
-      );
-    }
-
-    functionCall = {
-      name: functionCallName,
-      arguments: JSON.parse(functionCallArgs), // allow JSON.parse to throw
-    };
-  }
-
-  if (!paragraph && !functionCall) {
-    console.error(
-      identifier,
-      "Stream error: received message without content or function_call, raw:",
-      JSON.stringify({ paragraph, functionCallName, functionCallArgs })
-    );
-    throw new Error(
-      "Stream error: received message without content or function_call"
-    );
-  }
-
-  return {
-    role: "assistant",
-    content: paragraph || null,
-    function_call: functionCall,
-  };
-}
-
-export async function callOpenAiWithRetries(
-  identifier: string,
-  openAiPayload: OpenAIPayload,
-  openAiConfig: OpenAIConfig,
-  retries: number = 5,
-  chunkTimeoutMs: number = 15_000
-): Promise<OpenAIParsedResponseMessage> {
-  console.log(
-    identifier,
-    "Calling OpenAI API with retries:",
-    openAiConfig.service,
-    openAiPayload.model,
-    openAiConfig.baseUrl
-  );
-
-  let errorObj: any;
-  for (let i = 0; i <= retries; i++) {
-    try {
-      const timerId = `timer:${identifier}:${Date.now()}:callOpenAi:${
-        openAiConfig.service
-      }-${openAiPayload.model}-${openAiConfig.orgId}`;
-      const res = await callOpenAIStream(
-        identifier,
-        openAiPayload,
-        openAiConfig,
-        chunkTimeoutMs
-      );
-      return res;
-    } catch (error: any) {
-      const errorCode = error.data?.code;
-
-      if (errorCode) {
-        console.error(
-          identifier,
-          `Retry #${i} failed with API error: ${errorCode}`,
-          JSON.stringify({
-            data: error.data,
-          })
-        );
-      }
-
-      // to solve context length issue or JSON parsing error due to truncated response
-      openAiPayload.model = GPTModel.GPT4_1106_PREVIEW;
-      openAiPayload.temperature = 0.8; // Higher temperature
-
-      // on 2nd or more retries
-      // if Azure content policy error is persistent
-      if (
-        i >= 2 &&
-        openAiConfig.service === "azure" &&
-        errorCode === "content_filter"
-      ) {
-        console.log(
-          identifier,
-          `Switching to OpenAI service due to content filter error`
-        );
-        openAiConfig.service = "openai"; // Move to OpenAI, failed due to Azure content policy
-      }
-
-      // on 3rd retry
-      if (i === 3) {
-        if (openAiConfig.service === "azure") {
-          openAiConfig.service = "openai";
-        }
-      }
-
-      // on 4th retry
-      if (i === 4) {
-        // abort function calling, e.g. stubborn `python` function call case
-        if (openAiPayload.function_call) {
-          openAiPayload.function_call = "none";
-        }
-      }
-
-      console.error(
-        identifier,
-        `Retrying due to error: received bad response from OpenAI API [${
-          openAiConfig.service
-        }-${openAiPayload.model}-${openAiConfig.orgId}]: ${
-          error.message
-        } - ${JSON.stringify(error.response?.data)}`
-      );
-
-      await timeout(250);
-    }
-  }
-
-  console.error(
-    identifier,
-    `Failed to call OpenAI API after ${retries} attempts. Please lookup OpenAI status for active issues.`,
-    errorObj
-  );
-  throw new Error(
-    `${identifier}: Failed to call OpenAI API after ${retries} attempts. Please lookup OpenAI status for active issues.`
-  );
-}
-
-export async function callAnthropicWithRetries(
+async function callAnthropicWithRetries(
   identifier: string,
   AiPayload: AnthropicAIPayload,
+  AiConfig?: AnthropicAIConfig,
   attempts = 5
-): Promise<OpenAIParsedResponseMessage> {
-  console.log(
-    identifier,
-    "Calling Anthropic API with retries:",
-    AiPayload.functions?.map((f) => f.name)
-  );
+): Promise<ParsedResponseMessage> {
+  console.log(identifier, "Calling Anthropic API with retries");
   let lastResponse;
   for (let i = 0; i < attempts; i++) {
     // if last attempt
@@ -377,7 +362,7 @@ export async function callAnthropicWithRetries(
 
     try {
       // return await callAnthropic(identifier, AiPayload);
-      lastResponse = await callAnthropic(identifier, AiPayload);
+      lastResponse = await callAnthropic(identifier, AiPayload, AiConfig);
       return lastResponse;
     } catch (e: any) {
       console.error(
@@ -404,10 +389,8 @@ export async function callAnthropicWithRetries(
 async function callAnthropic(
   identifier: string,
   AiPayload: AnthropicAIPayload,
-  AiConfig?: {
-    service: "anthropic" | "bedrock";
-  }
-): Promise<OpenAIParsedResponseMessage> {
+  AiConfig?: AnthropicAIConfig
+): Promise<ParsedResponseMessage> {
   const anthropicMessages = jigAnthropicMessages(AiPayload.messages);
 
   let data;
@@ -418,10 +401,8 @@ async function callAnthropic(
     const MODEL_ID = "anthropic.claude-3-haiku-20240307-v1:0";
 
     // set in environment
-    const AWS_ACCESS_KEY_ID = "AKIAZI2LICXWZC3QQ4O2";
-    const AWS_SECRET_ACCESS_KEY = "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";
-    process.env.AWS_ACCESS_KEY_ID = AWS_ACCESS_KEY_ID;
-    process.env.AWS_SECRET_ACCESS_KEY = AWS_SECRET_ACCESS_KEY;
+    // process.env.AWS_ACCESS_KEY_ID = AWS_ACCESS_KEY_ID;
+    // process.env.AWS_SECRET_ACCESS_KEY = AWS_SECRET_ACCESS_KEY;
 
     const client = new BedrockRuntimeClient({ region: AWS_REGION });
     const payload = {
@@ -474,7 +455,6 @@ async function callAnthropic(
   }
 
   const answers = data.content;
-  console.log("Anthropic API answers:", JSON.stringify({ answers }));
 
   if (!answers[0]) {
     console.error(identifier, "Missing answer in Anthropic API:", data);
@@ -597,39 +577,175 @@ function jigAnthropicMessages(
   return jiggedMessages;
 }
 
-// async function main() {
-//   await timeout(1000);
-//   console.log("Starting...");
-//   callAnthropic(
-//     "test",
-//     {
-//       model: ClaudeModel.HAIKU,
-//       messages: [
-//         {
-//           role: "assistant",
-//           content: "hello",
-//         },
-//         {
-//           role: "user",
-//           content: "what's the weather",
-//         },
-//         {
-//           role: "user",
-//           content: "why is sky blue",
-//         },
-//         {
-//           role: "assistant",
-//           content: "hello",
-//         },
-//       ],
-//       functions: baseAiFunctions,
-//     },
-//     {
-//      //service: "bedrock",
-//     }
-//   )
-//     .then((res) => console.log(res))
-//     .catch((e) => console.error(e));
-// }
+export async function callWithRetries(
+  identifier: string,
+  aiPayload: GenericPayload,
+  aiConfig?: OpenAIConfig | AnthropicAIConfig,
+  retries: number = 5,
+  chunkTimeoutMs: number = 15_000
+): Promise<ParsedResponseMessage> {
+  // Determine which service to use based on the model type
+  if (isAnthropicPayload(aiPayload)) {
+    console.log(identifier, "Delegating call to Anthropic API");
 
-// main();
+    return await callAnthropicWithRetries(
+      identifier,
+      prepareAnthropicPayload(aiPayload),
+      aiConfig as AnthropicAIConfig,
+      retries
+    );
+  } else if (isOpenAiPayload(aiPayload)) {
+    console.log(identifier, "Delegating call to OpenAI API");
+    return await callOpenAiWithRetries(
+      identifier,
+      prepareOpenAIPayload(aiPayload),
+      aiConfig as OpenAIConfig,
+      retries,
+      chunkTimeoutMs
+    );
+  } else if (isGroqPayload(aiPayload)) {
+    console.log(identifier, "Delegating call to Groq API");
+    return await callGroqWithRetries(identifier, prepareGroqPayload(aiPayload));
+  } else {
+    throw new Error("Invalid AI payload: Unknown model type.");
+  }
+}
+
+function isAnthropicPayload(payload: any): Boolean {
+  return Object.values(ClaudeModel).includes(payload.model);
+}
+
+function prepareAnthropicPayload(payload: GenericPayload): AnthropicAIPayload {
+  return {
+    model: payload.model as ClaudeModel,
+    messages: payload.messages.map((message) => ({
+      role: message.role,
+      content: message.content,
+      // TODO: Handle files
+    })),
+    functions: payload.functions,
+  };
+}
+
+function isOpenAiPayload(payload: any): Boolean {
+  return Object.values(GPTModel).includes(payload.model);
+}
+
+function prepareOpenAIPayload(payload: GenericPayload): OpenAIPayload {
+  return {
+    model: payload.model as GPTModel,
+    messages: payload.messages.map((message) => ({
+      role: message.role,
+      content: normalizeMessageContent(message.content),
+      // TODO: Handle files
+    })),
+    functions: payload.functions,
+    function_call: payload.function_call,
+  };
+}
+
+function isGroqPayload(payload: any): Boolean {
+  return Object.values(GroqModel).includes(payload.model);
+}
+
+function prepareGroqPayload(payload: GenericPayload): GroqPayload {
+  return {
+    model: payload.model as GroqModel,
+    messages: payload.messages.map((message) => ({
+      role: message.role,
+      content: normalizeMessageContent(message.content),
+    })),
+    tools: payload.functions?.map((fn) => ({
+      type: "function",
+      function: fn,
+    })),
+    tool_choice: payload.function_call
+      ? typeof payload.function_call === "string"
+        ? payload.function_call // "none" | "auto"
+        : {
+            type: "function",
+            function: payload.function_call,
+          }
+      : undefined,
+    temperature: payload.temperature,
+  };
+}
+
+function normalizeMessageContent(
+  content: AnthropicAIMessage["content"]
+): string {
+  return Array.isArray(content)
+    ? content
+        .map((c) => (c.type === "text" ? c.text : `[${c.type}]`))
+        .join("\n")
+    : content;
+}
+
+async function callGroq(
+  identifier: string,
+  payload: GroqPayload
+): Promise<ParsedResponseMessage> {
+  const response = await axios.post(
+    "https://api.groq.com/openai/v1/chat/completions",
+    payload,
+    {
+      headers: {
+        "content-type": "application/json",
+        Authorization: `Bearer ${process.env.GROQ_API_KEY}`,
+      },
+    }
+  );
+
+  const data = response.data;
+
+  const answer = data.choices[0].message;
+  if (!answer) {
+    console.error(identifier, "Missing answer in Groq API:", data);
+    throw new Error("Missing answer in Groq API");
+  }
+
+  const textResponse = answer.content || null;
+  let functionCall: FunctionCall | null = null;
+  if (answer.tool_calls && answer.tool_calls.length) {
+    const toolCall = answer.tool_calls[0];
+    functionCall = {
+      name: toolCall.function.name,
+      arguments: JSON.parse(toolCall.function.arguments),
+    };
+  }
+
+  return {
+    role: "assistant",
+    content: textResponse,
+    function_call: functionCall,
+  };
+}
+
+async function callGroqWithRetries(
+  identifier: string,
+  payload: GroqPayload,
+  retries: number = 5
+): Promise<ParsedResponseMessage> {
+  console.log(identifier, "Calling Groq API with retries");
+
+  let lastResponse;
+  for (let i = 0; i < retries; i++) {
+    try {
+      lastResponse = await callGroq(identifier, payload);
+      return lastResponse;
+    } catch (e: any) {
+      console.error(
+        identifier,
+        `Retrying due to error: received bad response from Groq API: ${e.message}`,
+        JSON.stringify(e.response?.data)
+      );
+
+      await timeout(125 * i);
+    }
+  }
+  const error = new Error(
+    `Failed to call Groq API after ${retries} attempts`
+  ) as any;
+  error.response = lastResponse;
+  throw error;
+}

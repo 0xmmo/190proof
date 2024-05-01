@@ -13,10 +13,8 @@ export enum GPTModel {
   GPT4_0125_PREVIEW = "gpt-4-0125-preview",
 }
 
-export interface FunctionDefinition {
-  name: string;
-  description: string;
-  parameters: Record<string, any>;
+export enum GroqModel {
+  LLAMA_3_70B_8192 = "llama3-70b-8192",
 }
 
 export interface GenericError {
@@ -36,8 +34,17 @@ export type AIChainResponse = {
 
 export interface GenericMessage {
   role: "user" | "assistant" | "system";
-  content: string;
-  url: string;
+  content: string | AnthropicContentBlock[];
+  timestamp?: string;
+  files?: File[];
+  functionCalls?: FunctionCall[];
+}
+
+export interface File {
+  name: string;
+  mimetype: string;
+  url?: string;
+  data?: string;
 }
 
 export interface OpenAIMessage {
@@ -68,12 +75,6 @@ export interface AnthropicImageContentBlock {
   };
 }
 
-export interface AnthropicAIPayload {
-  model: ClaudeModel;
-  messages: AnthropicAIMessage[];
-  functions?: any[]; // TODO type this JSON schema
-}
-
 export interface OpenAIResponseMessage {
   role: "assistant";
   content: string | null;
@@ -83,7 +84,7 @@ export interface OpenAIResponseMessage {
   } | null;
 }
 
-export interface OpenAIParsedResponseMessage {
+export interface ParsedResponseMessage {
   role: "assistant";
   content: string | null;
   function_call: FunctionCall | null;
@@ -101,12 +102,6 @@ export interface OpenAIResponseMessage {
     name: string;
     arguments: string; // unparsed arguments object
   } | null;
-}
-
-export interface OpenAIParsedResponseMessage {
-  role: "assistant";
-  content: string | null;
-  function_call: FunctionCall | null;
 }
 
 export interface FunctionCall {
@@ -130,10 +125,58 @@ export interface OpenAIConfig {
   >;
 }
 
+export interface AnthropicAIConfig {
+  service: "anthropic" | "bedrock";
+}
+
+export interface FunctionDefinition {
+  name: string;
+  description: string;
+  parameters: Record<string, any>;
+}
+
+interface FunctionWrapped {
+  type: "function";
+  function: FunctionDefinition;
+}
+
+export interface GroqPayload {
+  model: GroqModel;
+  messages: OpenAIMessage[];
+  tools?: FunctionWrapped[];
+  tool_choice?:
+    | "none"
+    | "auto"
+    | { type: "function"; function: { name: string } };
+  temperature?: number;
+
+  functions?: any[]; // Deprecate this
+}
+
 export interface OpenAIPayload {
   model: GPTModel;
   messages: OpenAIMessage[];
+  tools?: FunctionWrapped[];
+  tool_choice?:
+    | "none"
+    | "auto"
+    | { type: "function"; function: { name: string } };
+  temperature?: number;
+
+  functions?: any[]; // Deprecate this
+  function_call?: "none" | "auto" | { name: string }; // Deprecate this
+}
+
+export interface AnthropicAIPayload {
+  model: ClaudeModel;
+  messages: AnthropicAIMessage[];
   functions?: any[]; // TODO type this JSON schema
+}
+
+export interface GenericPayload {
+  model: GPTModel | ClaudeModel | GroqModel;
+  messages: GenericMessage[];
+  functions?: FunctionDefinition[];
   function_call?: "none" | "auto" | { name: string };
   temperature?: number;
 }
