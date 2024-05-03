@@ -10,7 +10,8 @@
   ],
   "scripts": {
     "test": "jest --watch",
-    "build": "tsup"
+    "build": "tsup",
+    "send": "npm run build && git add . && git commit -am checkpoint && npm version patch && npm publish"
   },
   "author": "",
   "license": "ISC",
