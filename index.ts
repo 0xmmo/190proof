@@ -21,7 +21,13 @@ import {
 import axios from "axios";
 import { timeout } from "./utils";
 
-export { ClaudeModel, GPTModel, GroqModel, OpenAIConfig } from "./interfaces";
+export {
+  ClaudeModel,
+  GPTModel,
+  GroqModel,
+  OpenAIConfig,
+  FunctionDefinition,
+} from "./interfaces";
 
 function parseStreamedResponse(
   identifier: string,
@@ -39,10 +45,15 @@ function parseStreamedResponse(
       );
     }
 
-    functionCall = {
-      name: functionCallName,
-      arguments: JSON.parse(functionCallArgs), // allow JSON.parse to throw
-    };
+    try {
+      functionCall = {
+        name: functionCallName,
+        arguments: JSON.parse(functionCallArgs),
+      };
+    } catch (error) {
+      console.error("Error parsing functionCallArgs:", functionCallArgs);
+      throw error;
+    }
   }
 
   if (!paragraph && !functionCall) {

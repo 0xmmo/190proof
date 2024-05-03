@@ -11,6 +11,7 @@ export enum GPTModel {
   GPT35_0125 = "gpt-3.5-turbo-0125",
   GPT4_1106_PREVIEW = "gpt-4-1106-preview",
   GPT4_0125_PREVIEW = "gpt-4-0125-preview",
+  GPT4_0409 = "gpt-4-turbo-2024-04-09",
 }
 
 export enum GroqModel {
