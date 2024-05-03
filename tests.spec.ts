@@ -66,7 +66,7 @@ describe("Groq Model", () => {
 describe("OpenAI Model", () => {
   test("with functions", async () => {
     const aiPayload2: GenericPayload = {
-      model: GPTModel.GPT4_1106_PREVIEW,
+      model: GPTModel.GPT4_0409,
       messages: [
         {
           role: "user",
@@ -101,7 +101,7 @@ describe("OpenAI Model", () => {
 
   test("standard", async () => {
     const aiPayload5: GenericPayload = {
-      model: GPTModel.GPT4_1106_PREVIEW,
+      model: GPTModel.GPT4_0409,
       messages: [
         {
           role: "user",

@@ -191,8 +191,6 @@ async function callOpenAIStream(
     };
   }
 
-  console.log("payload", openAiPayload);
-
   let response;
   const controller = new AbortController();
   if (openAiConfig.service === "azure") {
