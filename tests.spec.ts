@@ -1,15 +1,25 @@
 import { callWithRetries } from "./index";
 import { GPTModel, GroqModel, ClaudeModel, GenericPayload } from "./interfaces";
 
-//  interface ParsedResponseMessage {
-//   role: "assistant";
-//   content: string | null;
-//   function_call: FunctionCall | null;
-// }
-
 jest.setTimeout(60000); // Increase timeout to 60s
 
 describe("Groq Model", () => {
+  test("standard", async () => {
+    const aiPayload4: GenericPayload = {
+      model: GroqModel.LLAMA_3_70B_8192,
+      messages: [
+        {
+          role: "user",
+          content: "Tell me a joke.",
+        },
+      ],
+    };
+
+    const answer = await callWithRetries("test4", aiPayload4);
+    expect(answer).toBeDefined();
+    expect(answer.content).toBeDefined();
+  });
+
   test("with functions", async () => {
     const aiPayload1: GenericPayload = {
       model: GroqModel.LLAMA_3_70B_8192,
@@ -38,17 +48,19 @@ describe("Groq Model", () => {
       ],
     };
 
-    const answer1 = await callWithRetries("test1", aiPayload1);
-    expect(answer1).toBeDefined();
-    expect(answer1.function_call).toBeDefined();
-    expect(answer1.function_call?.name).toBeDefined();
-    expect(answer1.function_call?.arguments).toBeDefined();
-    expect(answer1.function_call?.arguments?.team_name).toBeDefined();
+    const answer = await callWithRetries("test1", aiPayload1);
+    expect(answer).toBeDefined();
+    expect(answer.function_call).toBeDefined();
+    expect(answer.function_call?.name).toBeDefined();
+    expect(answer.function_call?.arguments).toBeDefined();
+    expect(answer.function_call?.arguments?.team_name).toBeDefined();
   });
+});
 
+describe("OpenAI Model", () => {
   test("standard", async () => {
-    const aiPayload4: GenericPayload = {
-      model: GroqModel.LLAMA_3_70B_8192,
+    const aiPayload5: GenericPayload = {
+      model: GPTModel.GPT4_0409,
       messages: [
         {
           role: "user",
@@ -57,13 +69,11 @@ describe("Groq Model", () => {
       ],
     };
 
-    const answer4 = await callWithRetries("test4", aiPayload4);
-    expect(answer4).toBeDefined();
-    expect(answer4.content).toBeDefined();
+    const answer = await callWithRetries("test5", aiPayload5);
+    expect(answer).toBeDefined();
+    expect(answer.content).toBeDefined();
   });
-});
 
-describe("OpenAI Model", () => {
   test("with functions", async () => {
     const aiPayload2: GenericPayload = {
       model: GPTModel.GPT4_0409,
@@ -91,35 +101,56 @@ describe("OpenAI Model", () => {
       ],
     };
 
-    const answer2 = await callWithRetries("test2", aiPayload2);
-    expect(answer2).toBeDefined();
-    expect(answer2.function_call).toBeDefined();
-    expect(answer2.function_call?.name).toBeDefined();
-    expect(answer2.function_call?.arguments).toBeDefined();
-    expect(answer2.function_call?.arguments?.country_name).toBeDefined();
+    const answer = await callWithRetries("test2", aiPayload2);
+    expect(answer).toBeDefined();
+    expect(answer.function_call).toBeDefined();
+    expect(answer.function_call?.name).toBeDefined();
+    expect(answer.function_call?.arguments).toBeDefined();
+    expect(answer.function_call?.arguments?.country_name).toBeDefined();
   });
 
-  test("standard", async () => {
-    const aiPayload5: GenericPayload = {
+  test("with files in message", async () => {
+    const aiPayload8: GenericPayload = {
       model: GPTModel.GPT4_0409,
       messages: [
         {
           role: "user",
-          content: "Tell me a story.",
+          content: "Where is this?",
+          files: [
+            {
+              mimetype: "image/jpeg",
+              url: "https://upload.wikimedia.org/wikipedia/commons/thumb/d/de/Colosseo_2020.jpg/540px-Colosseo_2020.jpg",
+            },
+          ],
         },
       ],
     };
 
-    const answer5 = await callWithRetries("test5", aiPayload5);
-    expect(answer5).toBeDefined();
-    expect(answer5.content).toBeDefined();
+    const answer = await callWithRetries("test8", aiPayload8);
+    expect(answer.content).toContain("Italy");
   });
 });
 
 describe("Anthropic Model", () => {
+  test("standard", async () => {
+    const aiPayload6: GenericPayload = {
+      model: ClaudeModel.HAIKU,
+      messages: [
+        {
+          role: "user",
+          content: "Tell me about the universe.",
+        },
+      ],
+    };
+
+    const answer = await callWithRetries("test6", aiPayload6);
+    expect(answer).toBeDefined();
+    expect(answer.content).toBeDefined();
+  });
+
   test("with functions", async () => {
     const aiPayload3: GenericPayload = {
-      model: ClaudeModel.SONNET,
+      model: ClaudeModel.HAIKU,
       messages: [
         {
           role: "user",
@@ -144,27 +175,32 @@ describe("Anthropic Model", () => {
       ],
     };
 
-    const answer3 = await callWithRetries("test3", aiPayload3);
-    expect(answer3).toBeDefined();
-    expect(answer3.function_call).toBeDefined();
-    expect(answer3.function_call?.name).toBeDefined();
-    expect(answer3.function_call?.arguments).toBeDefined();
-    expect(answer3.function_call?.arguments?.topic).toBeDefined();
+    const answer = await callWithRetries("test3", aiPayload3);
+    expect(answer).toBeDefined();
+    expect(answer.function_call).toBeDefined();
+    expect(answer.function_call?.name).toBeDefined();
+    expect(answer.function_call?.arguments).toBeDefined();
+    expect(answer.function_call?.arguments?.topic).toBeDefined();
   });
 
-  test("standard", async () => {
-    const aiPayload6: GenericPayload = {
-      model: ClaudeModel.SONNET,
+  test("with files in message", async () => {
+    const aiPayload7: GenericPayload = {
+      model: ClaudeModel.HAIKU,
       messages: [
         {
           role: "user",
-          content: "Tell me about the universe.",
+          content: "Where is this?",
+          files: [
+            {
+              mimetype: "image/jpeg",
+              url: "https://upload.wikimedia.org/wikipedia/commons/thumb/d/de/Colosseo_2020.jpg/540px-Colosseo_2020.jpg",
+            },
+          ],
         },
       ],
     };
 
-    const answer6 = await callWithRetries("test6", aiPayload6);
-    expect(answer6).toBeDefined();
-    expect(answer6.content).toBeDefined();
+    const answer = await callWithRetries("test7", aiPayload7);
+    expect(answer.content).toContain("Italy");
   });
 });

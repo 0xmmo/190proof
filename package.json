@@ -9,7 +9,7 @@
     "dist"
   ],
   "scripts": {
-    "test": "jest --watch",
+    "test": "jest --watch --runInBand",
     "build": "tsup",
     "send": "npm run build && git add . && git commit -am checkpoint && npm version patch && npm publish"
   },
@@ -21,5 +21,9 @@
     "ts-jest": "^29.1.2",
     "tsup": "^8.0.2",
     "typescript": "^5.4.5"
+  },
+  "dependencies": {
+    "heic-decode": "^2.0.0",
+    "sharp": "^0.33.3"
   }
 }

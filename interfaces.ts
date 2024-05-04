@@ -35,14 +35,13 @@ export type AIChainResponse = {
 
 export interface GenericMessage {
   role: "user" | "assistant" | "system";
-  content: string | AnthropicContentBlock[];
+  content: string;
   timestamp?: string;
   files?: File[];
   functionCalls?: FunctionCall[];
 }
 
 export interface File {
-  name: string;
   mimetype: string;
   url?: string;
   data?: string;
@@ -50,7 +49,23 @@ export interface File {
 
 export interface OpenAIMessage {
   role: "user" | "assistant" | "system";
-  content: string;
+  content: string | OpenAIContentBlock[];
+}
+
+export type OpenAIContentBlock =
+  | OpenAITextContentBlock
+  | OpenAIImageContentBlock;
+
+export interface OpenAITextContentBlock {
+  type: "text";
+  text: string;
+}
+
+export interface OpenAIImageContentBlock {
+  type: "image_url";
+  image_url: {
+    url: string; // URL to the image, can also be a base64 string
+  };
 }
 
 export interface AnthropicAIMessage {
@@ -72,7 +87,7 @@ export interface AnthropicImageContentBlock {
   source: {
     type: "base64";
     media_type: "image/jpeg" | "image/png" | "image/gif" | "image/webp";
-    data: string;
+    data: string; // Must be a base64 string
   };
 }
 

@@ -13,13 +13,18 @@ import {
   GroqModel,
   ParsedResponseMessage,
   FunctionCall,
+  AnthropicContentBlock,
+  OpenAIContentBlock,
 } from "./interfaces";
 import {
   BedrockRuntimeClient,
   InvokeModelCommand,
 } from "@aws-sdk/client-bedrock-runtime";
 import axios from "axios";
-import { timeout } from "./utils";
+import { isHeicImage, timeout } from "./utils";
+
+const sharp = require("sharp");
+const decode = require("heic-decode");
 
 export {
   ClaudeModel,
@@ -27,6 +32,8 @@ export {
   GroqModel,
   OpenAIConfig,
   FunctionDefinition,
+  GenericMessage,
+  GenericPayload,
 } from "./interfaces";
 
 function parseStreamedResponse(
@@ -599,7 +606,7 @@ export async function callWithRetries(
 
     return await callAnthropicWithRetries(
       identifier,
-      prepareAnthropicPayload(aiPayload),
+      await prepareAnthropicPayload(aiPayload),
       aiConfig as AnthropicAIConfig,
       retries
     );
@@ -607,14 +614,17 @@ export async function callWithRetries(
     console.log(identifier, "Delegating call to OpenAI API");
     return await callOpenAiWithRetries(
       identifier,
-      prepareOpenAIPayload(aiPayload),
+      await prepareOpenAIPayload(aiPayload),
       aiConfig as OpenAIConfig,
       retries,
       chunkTimeoutMs
     );
   } else if (isGroqPayload(aiPayload)) {
     console.log(identifier, "Delegating call to Groq API");
-    return await callGroqWithRetries(identifier, prepareGroqPayload(aiPayload));
+    return await callGroqWithRetries(
+      identifier,
+      await prepareGroqPayload(aiPayload)
+    );
   } else {
     throw new Error("Invalid AI payload: Unknown model type.");
   }
@@ -624,33 +634,130 @@ function isAnthropicPayload(payload: any): Boolean {
   return Object.values(ClaudeModel).includes(payload.model);
 }
 
-function prepareAnthropicPayload(payload: GenericPayload): AnthropicAIPayload {
-  return {
+async function prepareAnthropicPayload(
+  payload: GenericPayload
+): Promise<AnthropicAIPayload> {
+  const preparedPayload: AnthropicAIPayload = {
     model: payload.model as ClaudeModel,
-    messages: payload.messages.map((message) => ({
-      role: message.role,
-      content: message.content,
-      // TODO: Handle files
-    })),
+    messages: [],
     functions: payload.functions,
   };
+
+  for (const message of payload.messages) {
+    const anthropicContentBlocks: AnthropicContentBlock[] = [];
+
+    if (message.content) {
+      anthropicContentBlocks.push({
+        type: "text",
+        text: message.content,
+      });
+    }
+
+    for (const file of message.files || []) {
+      if (!file.mimetype.startsWith("image")) {
+        console.warn(
+          "Anthropic API does not support non-image file types. Skipping file."
+        );
+        continue;
+      }
+
+      if (file.url) {
+        anthropicContentBlocks.push({
+          type: "image",
+          source: {
+            type: "base64",
+            media_type: "image/png",
+            data: await getNormalizedBase64PNG(file.url, file.mimetype),
+          },
+        });
+      } else if (file.data) {
+        if (
+          !["image/png", "image/jpeg", "image/gif", "image/webp"].includes(
+            file.mimetype
+          )
+        ) {
+          throw new Error(
+            "Invalid image mimetype. Supported types are: image/png, image/jpeg, image/gif, image/webp"
+          );
+        }
+        anthropicContentBlocks.push({
+          type: "image",
+          source: {
+            type: "base64",
+            media_type: file.mimetype as any,
+            data: file.data,
+          },
+        });
+      }
+    }
+
+    preparedPayload.messages.push({
+      role: message.role,
+      content: anthropicContentBlocks,
+    });
+  }
+
+  return preparedPayload;
 }
 
 function isOpenAiPayload(payload: any): Boolean {
   return Object.values(GPTModel).includes(payload.model);
 }
 
-function prepareOpenAIPayload(payload: GenericPayload): OpenAIPayload {
-  return {
+async function prepareOpenAIPayload(
+  payload: GenericPayload
+): Promise<OpenAIPayload> {
+  const preparedPayload: OpenAIPayload = {
     model: payload.model as GPTModel,
-    messages: payload.messages.map((message) => ({
-      role: message.role,
-      content: normalizeMessageContent(message.content),
-      // TODO: Handle files
-    })),
+    messages: [],
     functions: payload.functions,
-    function_call: payload.function_call,
   };
+
+  for (const message of payload.messages) {
+    const openAIContentBlocks: OpenAIContentBlock[] = [];
+
+    if (message.content) {
+      openAIContentBlocks.push({
+        type: "text",
+        text: message.content,
+      });
+    }
+
+    for (const file of message.files || []) {
+      if (!file.mimetype.startsWith("image")) {
+        console.warn(
+          "OpenAI API does not support non-image file types. Skipping file."
+        );
+        continue;
+      }
+
+      if (file.url) {
+        openAIContentBlocks.push({
+          type: "image_url",
+          image_url: {
+            url: `data:image/png;base64,${await getNormalizedBase64PNG(
+              file.url,
+              file.mimetype
+            )}`,
+          },
+        });
+      } else if (file.data) {
+        openAIContentBlocks.push({
+          type: "image_url",
+          image_url: {
+            url: `data:${file.mimetype};base64,${file.data}`,
+          },
+        });
+      }
+    }
+
+    preparedPayload.messages.push({
+      role: message.role,
+      content: openAIContentBlocks,
+    });
+  }
+
+  return preparedPayload;
 }
 
 function isGroqPayload(payload: any): Boolean {
@@ -757,4 +864,35 @@ async function callGroqWithRetries(
   ) as any;
   error.response = lastResponse;
   throw error;
+}
+
+async function getNormalizedBase64PNG(
+  url: string,
+  mime: string
+): Promise<string> {
+  console.log("Normalizing image", url);
+  const response = await axios.get(url, { responseType: "arraybuffer" });
+
+  let imageBuffer = Buffer.from(response.data);
+  let sharpOptions = {};
+  if (isHeicImage(url, mime)) {
+    const imageData = await decode({ buffer: imageBuffer });
+    imageBuffer = Buffer.from(imageData.data);
+    sharpOptions = {
+      raw: {
+        width: imageData.width,
+        height: imageData.height,
+        channels: 4,
+      },
+    };
+  }
+
+  // Limits size of image to < 5MB Anthropic limit
+  const resizedBuffer = await sharp(imageBuffer, sharpOptions)
+    .withMetadata()
+    .resize(1024, 1024, { fit: "inside", withoutEnlargement: true })
+    .png()
+    .toBuffer();
+
+  return resizedBuffer.toString("base64");
 }
