@@ -42,7 +42,7 @@ export interface GenericMessage {
 }
 
 export interface File {
-  mimetype: string;
+  mimeType: string;
   url?: string;
   data?: string;
 }

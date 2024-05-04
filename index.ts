@@ -654,7 +654,7 @@ async function prepareAnthropicPayload(
     }
 
     for (const file of message.files || []) {
-      if (!file.mimetype.startsWith("image")) {
+      if (!file.mimeType.startsWith("image")) {
         console.warn(
           "Anthropic API does not support non-image file types. Skipping file."
         );
@@ -667,24 +667,24 @@ async function prepareAnthropicPayload(
           source: {
             type: "base64",
             media_type: "image/png",
-            data: await getNormalizedBase64PNG(file.url, file.mimetype),
+            data: await getNormalizedBase64PNG(file.url, file.mimeType),
           },
         });
       } else if (file.data) {
         if (
           !["image/png", "image/jpeg", "image/gif", "image/webp"].includes(
-            file.mimetype
+            file.mimeType
           )
         ) {
           throw new Error(
-            "Invalid image mimetype. Supported types are: image/png, image/jpeg, image/gif, image/webp"
+            "Invalid image mimeType. Supported types are: image/png, image/jpeg, image/gif, image/webp"
           );
         }
         anthropicContentBlocks.push({
           type: "image",
           source: {
             type: "base64",
-            media_type: file.mimetype as any,
+            media_type: file.mimeType as any,
             data: file.data,
           },
         });
@@ -724,7 +724,7 @@ async function prepareOpenAIPayload(
     }
 
     for (const file of message.files || []) {
-      if (!file.mimetype.startsWith("image")) {
+      if (!file.mimeType.startsWith("image")) {
         console.warn(
           "OpenAI API does not support non-image file types. Skipping file."
         );
@@ -737,7 +737,7 @@ async function prepareOpenAIPayload(
           image_url: {
             url: `data:image/png;base64,${await getNormalizedBase64PNG(
               file.url,
-              file.mimetype
+              file.mimeType
             )}`,
           },
         });
@@ -745,7 +745,7 @@ async function prepareOpenAIPayload(
         openAIContentBlocks.push({
           type: "image_url",
           image_url: {
-            url: `data:${file.mimetype};base64,${file.data}`,
+            url: `data:${file.mimeType};base64,${file.data}`,
           },
         });
       }

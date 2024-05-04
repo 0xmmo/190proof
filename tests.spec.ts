@@ -118,7 +118,7 @@ describe("OpenAI Model", () => {
           content: "Where is this?",
           files: [
             {
-              mimetype: "image/jpeg",
+              mimeType: "image/jpeg",
               url: "https://upload.wikimedia.org/wikipedia/commons/thumb/d/de/Colosseo_2020.jpg/540px-Colosseo_2020.jpg",
             },
           ],
@@ -192,7 +192,7 @@ describe("Anthropic Model", () => {
           content: "Where is this?",
           files: [
             {
-              mimetype: "image/jpeg",
+              mimeType: "image/jpeg",
               url: "https://upload.wikimedia.org/wikipedia/commons/thumb/d/de/Colosseo_2020.jpg/540px-Colosseo_2020.jpg",
             },
           ],
