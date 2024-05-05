@@ -123,7 +123,7 @@ async function callOpenAiWithRetries(
       }
 
       // to solve context length issue or JSON parsing error due to truncated response
-      openAiPayload.model = GPTModel.GPT4_0409;
+      openAiPayload.model = GPTModel.GPT4_0409; // TODO: Remove this
       openAiPayload.temperature = 0.8; // Higher temperature
 
       // on 2nd or more retries
