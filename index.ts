@@ -654,7 +654,7 @@ async function prepareAnthropicPayload(
     }
 
     for (const file of message.files || []) {
-      if (!file.mimeType.startsWith("image")) {
+      if (!file.mimeType?.startsWith("image")) {
         console.warn(
           "Anthropic API does not support non-image file types. Skipping file."
         );
@@ -724,7 +724,7 @@ async function prepareOpenAIPayload(
     }
 
     for (const file of message.files || []) {
-      if (!file.mimeType.startsWith("image")) {
+      if (!file.mimeType?.startsWith("image")) {
         console.warn(
           "OpenAI API does not support non-image file types. Skipping file."
         );
