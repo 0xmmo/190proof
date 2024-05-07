@@ -126,6 +126,18 @@ async function callOpenAiWithRetries(
       openAiPayload.model = GPTModel.GPT4_0409; // TODO: Remove this
       openAiPayload.temperature = 0.8; // Higher temperature
 
+      // Usually due to image content, we get a policy violation error
+      if (errorCode === "content_policy_violation") {
+        openAiPayload.messages = openAiPayload.messages.map(
+          (message: OpenAIMessage) => {
+            return {
+              ...message,
+              files: [],
+            };
+          }
+        );
+      }
+
       // on 2nd or more retries
       // if Azure content policy error is persistent
       if (
