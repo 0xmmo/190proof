@@ -128,14 +128,13 @@ async function callOpenAiWithRetries(
 
       // Usually due to image content, we get a policy violation error
       if (errorCode === "content_policy_violation") {
-        openAiPayload.messages = openAiPayload.messages.map(
-          (message: OpenAIMessage) => {
-            return {
-              ...message,
-              files: [],
-            };
+        openAiPayload.messages.forEach((message: OpenAIMessage) => {
+          if (Array.isArray(message.content)) {
+            message.content = message.content.filter(
+              (content) => content.type === "text"
+            );
           }
-        );
+        });
       }
 
       // on 2nd or more retries
