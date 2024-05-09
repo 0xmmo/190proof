@@ -357,13 +357,13 @@ async function callOpenAIStream(
           continue;
         }
 
-        const dFn = json.choices[0].delta.function_call;
+        const dFn = json.choices?.[0]?.delta?.function_call;
         if (dFn) {
           if (dFn.name) functionCallName += dFn.name;
           if (dFn.arguments) functionCallArgs += dFn.arguments;
         }
 
-        const text = json.choices[0].delta.content;
+        const text = json.choices?.[0]?.delta?.content;
         if (text) {
           paragraph += text;
         }
