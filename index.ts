@@ -393,6 +393,7 @@ async function callAnthropicWithRetries(
       lastResponse = await callAnthropic(identifier, AiPayload, AiConfig);
       return lastResponse;
     } catch (e: any) {
+      console.error(e);
       console.error(
         identifier,
         `Retrying due to error: received bad response from Anthropic API: ${e.message}`,
@@ -862,6 +863,7 @@ async function callGroqWithRetries(
       lastResponse = await callGroq(identifier, payload);
       return lastResponse;
     } catch (e: any) {
+      console.error(e);
       console.error(
         identifier,
         `Retrying due to error: received bad response from Groq API: ${e.message}`,
