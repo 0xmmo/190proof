@@ -166,6 +166,7 @@ async function callOpenAiWithRetries(
         }
       }
 
+      console.error(error);
       console.error(
         identifier,
         `Retrying due to error: received bad response from OpenAI API [${
