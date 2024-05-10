@@ -34,6 +34,7 @@ export {
   ClaudeModel,
   GPTModel,
   GroqModel,
+  GeminiModel,
   OpenAIConfig,
   FunctionDefinition,
   GenericMessage,
