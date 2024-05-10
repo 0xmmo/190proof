@@ -110,6 +110,16 @@ async function callOpenAiWithRetries(
       );
       return res;
     } catch (error: any) {
+      console.error(error);
+      console.error(
+        identifier,
+        `Retrying due to error: received bad response from OpenAI API [${
+          openAiConfig?.service
+        }-${openAiPayload.model}-${openAiConfig?.orgId}]: ${
+          error.message
+        } - ${JSON.stringify(error.response?.data)}`
+      );
+
       const errorCode = error.data?.code;
 
       if (errorCode) {
@@ -165,16 +175,6 @@ async function callOpenAiWithRetries(
           openAiPayload.tool_choice = "none";
         }
       }
-
-      console.error(error);
-      console.error(
-        identifier,
-        `Retrying due to error: received bad response from OpenAI API [${
-          openAiConfig?.service
-        }-${openAiPayload.model}-${openAiConfig?.orgId}]: ${
-          error.message
-        } - ${JSON.stringify(error.response?.data)}`
-      );
 
       await timeout(250);
     }
