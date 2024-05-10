@@ -1,5 +1,11 @@
 import { callWithRetries } from "./index";
-import { GPTModel, GroqModel, ClaudeModel, GenericPayload } from "./interfaces";
+import {
+  GPTModel,
+  GroqModel,
+  ClaudeModel,
+  GenericPayload,
+  GeminiModel,
+} from "./interfaces";
 
 jest.setTimeout(60000); // Increase timeout to 60s
 
@@ -201,6 +207,86 @@ describe("Anthropic Model", () => {
     };
 
     const answer = await callWithRetries("test7", aiPayload7);
+    expect(answer.content).toContain("Italy");
+  });
+});
+
+describe("Gemini Model", () => {
+  test("standard query", async () => {
+    const aiPayload9: GenericPayload = {
+      model: GeminiModel.GEMINI_15_PRO,
+      messages: [
+        {
+          role: "user",
+          content: "Explain quantum computing.",
+        },
+      ],
+    };
+
+    const answer = await callWithRetries("test9", aiPayload9);
+    expect(answer).toBeDefined();
+    expect(answer.content).toBeDefined();
+  });
+
+  test("with functions", async () => {
+    const aiPayload10: GenericPayload = {
+      model: GeminiModel.GEMINI_15_PRO,
+      messages: [
+        {
+          role: "user",
+          content:
+            "Calculate the trajectory for a Mars mission launching on 2023-10-01.",
+        },
+      ],
+      functions: [
+        {
+          name: "calculate_trajectory",
+          description: "Calculate the trajectory based on provided parameters",
+          parameters: {
+            type: "object",
+            properties: {
+              destination: {
+                type: "string",
+                description: "The destination of the mission",
+              },
+              launchDate: {
+                type: "string",
+                description: "The launch date in ISO format",
+              },
+            },
+            required: ["destination", "launchDate"],
+          },
+        },
+      ],
+    };
+
+    const answer = await callWithRetries("test10", aiPayload10);
+    expect(answer).toBeDefined();
+    expect(answer.function_call).toBeDefined();
+    expect(answer.function_call?.name).toBeDefined();
+    expect(answer.function_call?.arguments).toBeDefined();
+    expect(answer.function_call?.arguments?.destination).toBeDefined();
+    expect(answer.function_call?.arguments?.launchDate).toBeDefined();
+  });
+
+  test("with files in message", async () => {
+    const aiPayload11: GenericPayload = {
+      model: GeminiModel.GEMINI_15_PRO,
+      messages: [
+        {
+          role: "user",
+          content: "Where is this?",
+          files: [
+            {
+              mimeType: "image/jpeg",
+              url: "https://upload.wikimedia.org/wikipedia/commons/thumb/d/de/Colosseo_2020.jpg/540px-Colosseo_2020.jpg",
+            },
+          ],
+        },
+      ],
+    };
+
+    const answer = await callWithRetries("test11", aiPayload11);
     expect(answer.content).toContain("Italy");
   });
 });

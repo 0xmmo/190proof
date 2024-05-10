@@ -15,6 +15,9 @@ import {
   FunctionCall,
   AnthropicContentBlock,
   OpenAIContentBlock,
+  GoogleAIPayload,
+  GeminiModel,
+  GoogleAIPart,
 } from "./interfaces";
 import {
   BedrockRuntimeClient,
@@ -22,6 +25,7 @@ import {
 } from "@aws-sdk/client-bedrock-runtime";
 import axios from "axios";
 import { isHeicImage, timeout } from "./utils";
+const { GoogleGenerativeAI } = require("@google/generative-ai");
 
 const sharp = require("sharp");
 const decode = require("heic-decode");
@@ -618,6 +622,119 @@ function jigAnthropicMessages(
   return jiggedMessages;
 }
 
+async function prepareGoogleAIPayload(
+  payload: GenericPayload
+): Promise<GoogleAIPayload> {
+  const preparedPayload: GoogleAIPayload = {
+    model: payload.model as GeminiModel,
+    messages: [],
+    tools: payload.functions
+      ? {
+          functionDeclarations: payload.functions.map((fn) => ({
+            name: fn.name,
+            parameters: {
+              // Google puts their description in the parameters object rather than in a top-level field
+              description: fn.description,
+              ...fn.parameters,
+            },
+          })),
+        }
+      : undefined,
+  };
+
+  for (const message of payload.messages) {
+    const googleAIContentParts: GoogleAIPart[] = [];
+
+    if (message.content) {
+      googleAIContentParts.push({
+        text: message.content,
+      });
+    }
+
+    for (const file of message.files || []) {
+      if (!file.mimeType?.startsWith("image")) {
+        console.warn(
+          "Google AI API does not support non-image file types. Skipping file."
+        );
+        continue;
+      }
+
+      if (file.url) {
+        googleAIContentParts.push({
+          inlineData: {
+            mimeType: "image/png",
+            data: await getNormalizedBase64PNG(file.url, file.mimeType),
+          },
+        });
+      } else if (file.data) {
+        if (
+          !["image/png", "image/jpeg", "image/gif", "image/webp"].includes(
+            file.mimeType
+          )
+        ) {
+          throw new Error(
+            "Invalid image mimeType. Supported types are: image/png, image/jpeg, image/gif, image/webp"
+          );
+        }
+        googleAIContentParts.push({
+          inlineData: {
+            mimeType: file.mimeType,
+            data: file.data,
+          },
+        });
+      }
+    }
+
+    preparedPayload.messages.push({
+      role: message.role === "user" ? "user" : "model",
+      parts: googleAIContentParts,
+    });
+  }
+
+  return preparedPayload;
+}
+
+async function callGoogleAI(
+  identifier: string,
+  payload: GoogleAIPayload
+): Promise<ParsedResponseMessage> {
+  console.log(identifier, "Calling Google AI API");
+
+  const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+  const model = genAI.getGenerativeModel({
+    model: payload.model,
+    tools: payload.tools,
+  });
+
+  const history = payload.messages.slice(0, -1);
+  const lastMessage = payload.messages.slice(-1)[0];
+  const chat = model.startChat({
+    history,
+  });
+
+  const result = await chat.sendMessage(lastMessage.parts);
+  const response = await result.response;
+
+  const text: string | undefined = response.text();
+  const functionCalls:
+    | {
+        name: string;
+        args: Record<string, any>;
+      }[]
+    | undefined = response.functionCalls();
+
+  const parsedFunctionCalls = functionCalls?.map((fc) => ({
+    name: fc.name,
+    arguments: fc.args,
+  }));
+
+  return {
+    role: "assistant",
+    content: text || null,
+    function_call: parsedFunctionCalls?.[0] || null,
+  };
+}
+
 export async function callWithRetries(
   identifier: string,
   aiPayload: GenericPayload,
@@ -649,6 +766,12 @@ export async function callWithRetries(
     return await callGroqWithRetries(
       identifier,
       await prepareGroqPayload(aiPayload)
+    );
+  } else if (isGoogleAIPayload(aiPayload)) {
+    console.log(identifier, "Delegating call to Google AI API");
+    return await callGoogleAI(
+      identifier,
+      await prepareGoogleAIPayload(aiPayload)
     );
   } else {
     throw new Error("Invalid AI payload: Unknown model type.");
@@ -773,10 +896,6 @@ async function prepareOpenAIPayload(
           type: "image_url",
           image_url: {
             url: file.url,
-            // url: `data:image/png;base64,${await getNormalizedBase64PNG(
-            //   file.url,
-            //   file.mimeType
-            // )}`,
           },
         });
       } else if (file.data) {
@@ -833,6 +952,10 @@ function normalizeMessageContent(
         .map((c) => (c.type === "text" ? c.text : `[${c.type}]`))
         .join("\n")
     : content;
+}
+
+function isGoogleAIPayload(payload: any): Boolean {
+  return Object.values(GeminiModel).includes(payload.model);
 }
 
 async function callGroq(
@@ -935,3 +1058,41 @@ async function getNormalizedBase64PNG(
 
   return resizedBuffer.toString("base64");
 }
+
+// async function main() {
+//   const payload: GenericPayload = {
+//     model: GeminiModel.GEMINI_15_PRO,
+//     messages: [
+//       {
+//         role: "user",
+//         content: "What is this logo?",
+//         files: [
+//           {
+//             mimeType: "image/png",
+//             url: "https://www.wikimedia.org/static/images/wmf-logo-2x.png",
+//           },
+//         ],
+//       },
+//     ],
+//     functions: [
+//       {
+//         name: "answer_logo_question",
+//         description: "Answer a question about a logo",
+//         parameters: {
+//           type: "object",
+//           properties: {
+//             organization: {
+//               type: "string",
+//             },
+//           },
+//         },
+//       },
+//     ],
+//   };
+
+//   const answer = await callWithRetries("test", payload);
+
+//   console.log(answer);
+// }
+
+// main();

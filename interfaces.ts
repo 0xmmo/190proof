@@ -18,6 +18,10 @@ export enum GroqModel {
   LLAMA_3_70B_8192 = "llama3-70b-8192",
 }
 
+export enum GeminiModel {
+  GEMINI_15_PRO = "gemini-1.5-pro-latest",
+}
+
 export interface GenericError {
   message: string;
 }
@@ -147,7 +151,7 @@ export interface AnthropicAIConfig {
 
 export interface FunctionDefinition {
   name: string;
-  description: string;
+  description?: string;
   parameters: Record<string, any>;
 }
 
@@ -186,8 +190,32 @@ export interface AnthropicAIPayload {
   functions?: any[]; // TODO type this JSON schema
 }
 
+export interface GoogleAITextPart {
+  text: string;
+}
+
+export interface GoogleAIInlineDataPart {
+  inlineData: {
+    mimeType: string;
+    data: string;
+  };
+}
+
+export type GoogleAIPart = GoogleAITextPart | GoogleAIInlineDataPart;
+export interface GoogleAIMessage {
+  role: "user" | "model";
+  parts: GoogleAIPart[];
+}
+export interface GoogleAIPayload {
+  model: GeminiModel;
+  messages: GoogleAIMessage[];
+  tools?: {
+    functionDeclarations: FunctionDefinition[];
+  };
+}
+
 export interface GenericPayload {
-  model: GPTModel | ClaudeModel | GroqModel;
+  model: GPTModel | ClaudeModel | GroqModel | GeminiModel;
   messages: GenericMessage[];
   functions?: FunctionDefinition[];
   function_call?: "none" | "auto" | { name: string };
