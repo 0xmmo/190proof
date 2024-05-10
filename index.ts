@@ -263,6 +263,7 @@ async function callOpenAIStream(
   }
 
   if (response.body) {
+    let rawStreamedBody = "";
     let paragraph = "";
     let functionCallName = "";
     let functionCallArgs = "";
@@ -304,6 +305,7 @@ async function callOpenAIStream(
       }
 
       let chunk = new TextDecoder().decode(value);
+      rawStreamedBody += chunk + "\n";
       if (partialChunk) {
         chunk = partialChunk + chunk;
         partialChunk = "";
@@ -320,13 +322,22 @@ async function callOpenAIStream(
             identifier,
             `Stream explicitly marked as done after ${chunkIndex + 1} chunks.`
           );
-          return parseStreamedResponse(
-            identifier,
-            paragraph,
-            functionCallName,
-            functionCallArgs,
-            functionNames
-          );
+          try {
+            return parseStreamedResponse(
+              identifier,
+              paragraph,
+              functionCallName,
+              functionCallArgs,
+              functionNames
+            );
+          } catch (error) {
+            console.error(
+              identifier,
+              "Stream error: parsing response:",
+              rawStreamedBody
+            );
+            throw error;
+          }
         }
 
         let json;
@@ -346,6 +357,7 @@ async function callOpenAIStream(
             );
             const error = new Error("Stream error: OpenAI error") as any;
             error.data = json.error;
+            error.requestBody = JSON.stringify(openAiPayload);
             throw error;
           }
           if (chunkIndex !== 0)
