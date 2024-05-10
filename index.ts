@@ -772,10 +772,11 @@ async function prepareOpenAIPayload(
         openAIContentBlocks.push({
           type: "image_url",
           image_url: {
-            url: `data:image/png;base64,${await getNormalizedBase64PNG(
-              file.url,
-              file.mimeType
-            )}`,
+            url: file.url,
+            // url: `data:image/png;base64,${await getNormalizedBase64PNG(
+            //   file.url,
+            //   file.mimeType
+            // )}`,
           },
         });
       } else if (file.data) {
