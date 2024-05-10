@@ -178,9 +178,6 @@ export interface OpenAIPayload {
     | "auto"
     | { type: "function"; function: { name: string } };
   temperature?: number;
-
-  functions?: any[]; // Deprecate this
-  function_call?: "none" | "auto" | { name: string }; // Deprecate this
 }
 
 export interface AnthropicAIPayload {

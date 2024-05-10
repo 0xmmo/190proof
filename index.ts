@@ -161,8 +161,8 @@ async function callOpenAiWithRetries(
       // on 4th retry
       if (i === 4) {
         // abort function calling, e.g. stubborn `python` function call case
-        if (openAiPayload.function_call) {
-          openAiPayload.function_call = "none";
+        if (openAiPayload.tools) {
+          openAiPayload.tool_choice = "none";
         }
       }
 
@@ -196,8 +196,8 @@ async function callOpenAIStream(
   openAiConfig: OpenAIConfig | undefined,
   chunkTimeoutMs: number
 ): Promise<ParsedResponseMessage> {
-  const functionNames: Set<string> | null = openAiPayload.functions
-    ? new Set(openAiPayload.functions.map((fn) => fn.name as string))
+  const functionNames: Set<string> | null = openAiPayload.tools
+    ? new Set(openAiPayload.tools.map((fn) => fn.function.name as string))
     : null;
 
   if (!openAiConfig) {
@@ -722,8 +722,20 @@ async function prepareOpenAIPayload(
 ): Promise<OpenAIPayload> {
   const preparedPayload: OpenAIPayload = {
     model: payload.model as GPTModel,
+    temperature: payload.temperature,
     messages: [],
-    functions: payload.functions,
+    tools: payload.functions?.map((fn) => ({
+      type: "function",
+      function: fn,
+    })),
+    tool_choice: payload.function_call
+      ? typeof payload.function_call === "string"
+        ? payload.function_call // "none" | "auto"
+        : {
+            type: "function",
+            function: payload.function_call,
+          }
+      : undefined,
   };
 
   for (const message of payload.messages) {
