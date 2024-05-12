@@ -374,7 +374,13 @@ async function callOpenAIStream(
           continue;
         }
 
-        const toolCall = json.choices[0].tool_calls?.[0];
+        const toolCall: {
+          index?: number;
+          function?: {
+            name?: string;
+            arguments?: string;
+          };
+        } = json.choices[0].tool_calls?.[0];
         if (toolCall) {
           const toolCallIndex = toolCall.index || 0;
           if (toolCallIndex === 0) {
