@@ -375,12 +375,8 @@ async function callOpenAIStream(
         }
 
         const toolCall = json.choices[0].tool_calls?.[0];
-        if (toolCall && toolCall.index !== 0) {
-          // Ignore tool calls that are not the first one
-          continue;
-        }
-        const dFn = toolCall?.function;
-        if (dFn) {
+        if (toolCall?.index === 0) {
+          const dFn = toolCall?.function;
           if (dFn.name) functionCallName += dFn.name;
           if (dFn.arguments) functionCallArgs += dFn.arguments;
         }
