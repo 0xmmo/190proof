@@ -383,6 +383,7 @@ async function callOpenAIStream(
               };
             }
           | undefined = json.choices[0].tool_calls?.[0];
+        console.log(identifier, "Tool call:", toolCall);
         if (toolCall) {
           const toolCallIndex = toolCall.index || 0;
           if (toolCallIndex === 0) {
