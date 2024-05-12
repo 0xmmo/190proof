@@ -382,8 +382,7 @@ async function callOpenAIStream(
                 arguments?: string;
               };
             }
-          | undefined = json.choices[0].tool_calls?.[0];
-        console.log(identifier, "Tool call:", toolCall);
+          | undefined = json.choices?.[0]?.delta?.tool_calls?.[0];
         if (toolCall) {
           const toolCallIndex = toolCall.index || 0;
           if (toolCallIndex === 0) {
