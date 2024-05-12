@@ -375,11 +375,13 @@ async function callOpenAIStream(
         }
 
         const toolCall = json.choices[0].tool_calls?.[0];
-        const toolCallIndex = toolCall?.index || 0;
-        if (toolCallIndex === 0) {
-          const dFn = toolCall?.function;
-          if (dFn.name) functionCallName += dFn.name;
-          if (dFn.arguments) functionCallArgs += dFn.arguments;
+        if (toolCall) {
+          const toolCallIndex = toolCall.index || 0;
+          if (toolCallIndex === 0) {
+            const dFn = toolCall.function || {};
+            if (dFn.name) functionCallName += dFn.name;
+            if (dFn.arguments) functionCallArgs += dFn.arguments;
+          }
         }
 
         const text = json.choices?.[0]?.delta?.content;
