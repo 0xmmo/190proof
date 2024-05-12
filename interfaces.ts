@@ -188,6 +188,7 @@ export interface AnthropicAIPayload {
   model: ClaudeModel;
   messages: AnthropicAIMessage[];
   functions?: any[]; // TODO type this JSON schema
+  temperature?: number;
 }
 
 export interface GoogleAITextPart {

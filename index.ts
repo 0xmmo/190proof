@@ -790,6 +790,7 @@ async function prepareAnthropicPayload(
     model: payload.model as ClaudeModel,
     messages: [],
     functions: payload.functions,
+    temperature: payload.temperature,
   };
 
   for (const message of payload.messages) {
