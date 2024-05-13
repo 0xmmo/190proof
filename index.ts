@@ -242,6 +242,20 @@ async function callOpenAIStream(
     const azureConfig = openAiConfig.modelConfigMap[model];
     const endpoint = `${openAiConfig.baseUrl}/azure-openai/${azureConfig.resource}/${azureConfig.deployment}/chat/completions?api-version=${azureConfig.apiVersion}`;
 
+    try {
+      const stringifiedPayload = JSON.stringify({
+        ...openAiPayload,
+        stream: true,
+      });
+      const parsedPayload = JSON.parse(stringifiedPayload);
+    } catch (error) {
+      console.error(
+        identifier,
+        "Stream error: Azure OpenAI JSON parsing error:",
+        JSON.stringify(error)
+      );
+    }
+
     response = await fetch(endpoint, {
       method: "POST",
       headers: {
@@ -368,7 +382,7 @@ async function callOpenAIStream(
             console.error(
               identifier,
               "Stream error: OpenAI error:",
-              json.error
+              json.error && JSON.stringify(json.error)
             );
             const error = new Error("Stream error: OpenAI error") as any;
             error.data = json.error;
