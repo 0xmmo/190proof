@@ -386,7 +386,7 @@ async function callOpenAIStream(
             );
             const error = new Error("Stream error: OpenAI error") as any;
             error.data = json.error;
-            error.requestBody = JSON.stringify(openAiPayload);
+            error.requestBody = openAiPayload;
             throw error;
           }
           if (chunkIndex !== 0)
@@ -923,27 +923,43 @@ async function prepareOpenAIPayload(
     }
 
     for (const file of message.files || []) {
-      if (!file.mimeType?.startsWith("image")) {
+      if (file.mimeType?.startsWith("image")) {
+        if (file.url) {
+          openAIContentBlocks.push({
+            type: "image_url",
+            image_url: {
+              url: file.url,
+            },
+          });
+        } else if (file.data) {
+          openAIContentBlocks.push({
+            type: "image_url",
+            image_url: {
+              url: `data:${file.mimeType};base64,${file.data}`,
+            },
+          });
+        }
+        // } else if (file.mimeType?.startsWith("audio")) {
+        //   if (file.url) {
+        //     openAIContentBlocks.push({
+        //       type: "audio_url",
+        //       audio_url: {
+        //         url: file.url,
+        //       },
+        //     });
+        //   } else if (file.data) {
+        //     openAIContentBlocks.push({
+        //       type: "audio_url",
+        //       audio_url: {
+        //         url: `data:${file.mimeType};base64,${file.data}`,
+        //       },
+        //     });
+        //   }
+      } else {
         console.warn(
-          "OpenAI API does not support non-image file types. Skipping file."
+          "Skipping file. Type not supported by OpenAI API:",
+          file.mimeType
         );
-        continue;
-      }
-
-      if (file.url) {
-        openAIContentBlocks.push({
-          type: "image_url",
-          image_url: {
-            url: file.url,
-          },
-        });
-      } else if (file.data) {
-        openAIContentBlocks.push({
-          type: "image_url",
-          image_url: {
-            url: `data:${file.mimeType};base64,${file.data}`,
-          },
-        });
       }
     }
 

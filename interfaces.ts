@@ -12,6 +12,7 @@ export enum GPTModel {
   GPT4_1106_PREVIEW = "gpt-4-1106-preview",
   GPT4_0125_PREVIEW = "gpt-4-0125-preview",
   GPT4_0409 = "gpt-4-turbo-2024-04-09",
+  GPT4O = "gpt-4o",
 }
 
 export enum GroqModel {
@@ -58,7 +59,8 @@ export interface OpenAIMessage {
 
 export type OpenAIContentBlock =
   | OpenAITextContentBlock
-  | OpenAIImageContentBlock;
+  | OpenAIImageContentBlock
+  | OpenAIAudioContentBlock;
 
 export interface OpenAITextContentBlock {
   type: "text";
@@ -69,6 +71,13 @@ export interface OpenAIImageContentBlock {
   type: "image_url";
   image_url: {
     url: string; // URL to the image, can also be a base64 string
+  };
+}
+
+export interface OpenAIAudioContentBlock {
+  type: "audio_url";
+  audio_url: {
+    url: string; // URL to the audio, can also be a base64 string
   };
 }
 

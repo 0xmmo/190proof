@@ -66,7 +66,7 @@ describe("Groq Model", () => {
 describe("OpenAI Model", () => {
   test("standard", async () => {
     const aiPayload5: GenericPayload = {
-      model: GPTModel.GPT4_0409,
+      model: GPTModel.GPT4O,
       messages: [
         {
           role: "user",
@@ -82,7 +82,7 @@ describe("OpenAI Model", () => {
 
   test("with functions", async () => {
     const aiPayload2: GenericPayload = {
-      model: GPTModel.GPT4_0409,
+      model: GPTModel.GPT4O,
       messages: [
         {
           role: "user",
@@ -115,9 +115,9 @@ describe("OpenAI Model", () => {
     expect(answer.function_call?.arguments?.country_name).toBeDefined();
   });
 
-  test("with files in message", async () => {
+  test("with images in message", async () => {
     const aiPayload8: GenericPayload = {
-      model: GPTModel.GPT4_0409,
+      model: GPTModel.GPT4O,
       messages: [
         {
           role: "user",
