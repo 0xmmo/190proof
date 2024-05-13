@@ -143,6 +143,10 @@ async function callOpenAiWithRetries(
 
       // Usually due to image content, we get a policy violation error
       if (errorCode === "content_policy_violation") {
+        console.log(
+          identifier,
+          `Switching to OpenAI service due to content policy violation error`
+        );
         openAiPayload.messages.forEach((message: OpenAIMessage) => {
           if (Array.isArray(message.content)) {
             message.content = message.content.filter(
@@ -169,6 +173,10 @@ async function callOpenAiWithRetries(
       // on 3rd retry
       if (i === 3) {
         if (openAiConfig?.service === "azure") {
+          console.log(
+            identifier,
+            `Switching to OpenAI service due to Azure service error`
+          );
           openAiConfig.service = "openai";
         }
       }
@@ -177,6 +185,10 @@ async function callOpenAiWithRetries(
       if (i === 4) {
         // abort function calling, e.g. stubborn `python` function call case
         if (openAiPayload.tools) {
+          console.log(
+            identifier,
+            `Switching to no tool choice due to persistent error`
+          );
           openAiPayload.tool_choice = "none";
         }
       }
@@ -302,9 +314,7 @@ async function callOpenAIStream(
           `Stream error: ended after ${
             chunkIndex + 1
           } chunks via reader done flag.`,
-          paragraph,
-          functionCallName,
-          functionCallArgs
+          rawStreamedBody
         );
         throw new Error("Stream error: ended prematurely");
       }
@@ -374,7 +384,7 @@ async function callOpenAIStream(
           continue;
         }
 
-        const toolCall:
+        const dToolCall:
           | {
               index?: number;
               function?: {
@@ -383,10 +393,11 @@ async function callOpenAIStream(
               };
             }
           | undefined = json.choices?.[0]?.delta?.tool_calls?.[0];
-        if (toolCall) {
-          const toolCallIndex = toolCall.index || 0;
+        if (dToolCall) {
+          const toolCallIndex = dToolCall.index || 0;
+          // TODO: handle multiple function calls in response
           if (toolCallIndex === 0) {
-            const dFn = toolCall.function || {};
+            const dFn = dToolCall.function || {};
             if (dFn.name) functionCallName += dFn.name;
             if (dFn.arguments) functionCallArgs += dFn.arguments;
           }
