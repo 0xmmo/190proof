@@ -222,6 +222,7 @@ export interface GoogleAIPayload {
   tools?: {
     functionDeclarations: FunctionDefinition[];
   };
+  systemInstruction?: string;
 }
 
 export interface GenericPayload {

@@ -289,4 +289,24 @@ describe("Gemini Model", () => {
     const answer = await callWithRetries("test11", aiPayload11);
     expect(answer.content).toContain("Italy");
   });
+
+  test.only("with system messages", async () => {
+    const aiPayload12: GenericPayload = {
+      model: GeminiModel.GEMINI_15_PRO,
+      messages: [
+        {
+          role: "system",
+          content: `Whenever the user asks for a joke always end it with "HAHAHAHA"`,
+        },
+        {
+          role: "user",
+          content: "Tell me a joke.",
+        },
+      ],
+    };
+
+    const answer = await callWithRetries("test12", aiPayload12);
+    expect(answer.content).toBeDefined();
+    expect(answer.content).toContain("HAHAHAHA");
+  });
 });

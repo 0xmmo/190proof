@@ -681,6 +681,11 @@ async function prepareGoogleAIPayload(
   };
 
   for (const message of payload.messages) {
+    if (message.role === "system") {
+      preparedPayload.systemInstruction = message.content;
+      continue;
+    }
+
     const googleAIContentParts: GoogleAIPart[] = [];
 
     if (message.content) {
@@ -724,7 +729,7 @@ async function prepareGoogleAIPayload(
     }
 
     preparedPayload.messages.push({
-      role: message.role === "user" ? "user" : "model",
+      role: message.role === "assistant" ? "model" : message.role,
       parts: googleAIContentParts,
     });
   }
@@ -742,6 +747,7 @@ async function callGoogleAI(
   const model = genAI.getGenerativeModel({
     model: payload.model,
     tools: payload.tools,
+    systemInstruction: payload.systemInstruction,
   });
 
   const history = payload.messages.slice(0, -1);
