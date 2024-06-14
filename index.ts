@@ -247,6 +247,8 @@ async function callOpenAIStream(
       endpoint = `${openAiConfig.baseUrl}/azure-openai/${azureConfig.resource}/${azureConfig.deployment}/chat/completions?api-version=${azureConfig.apiVersion}`;
     }
 
+    console.log(identifier, "Using endpoint", endpoint);
+
     try {
       const stringifiedPayload = JSON.stringify({
         ...openAiPayload,
