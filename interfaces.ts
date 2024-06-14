@@ -150,6 +150,7 @@ export interface OpenAIConfig {
       deployment: string;
       apiVersion: string;
       apiKey: string;
+      endpoint?: string;
     }
   >;
 }
