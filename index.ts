@@ -246,7 +246,6 @@ async function callOpenAIStream(
     } else {
       endpoint = `${openAiConfig.baseUrl}/azure-openai/${azureConfig.resource}/${azureConfig.deployment}/chat/completions?api-version=${azureConfig.apiVersion}`;
     }
-
     console.log(identifier, "Using endpoint", endpoint);
 
     try {
@@ -278,7 +277,7 @@ async function callOpenAIStream(
   } else {
     // openai by default
     console.log(identifier, "Using OpenAI service", openAiPayload.model);
-    const endpoint = `${openAiConfig.baseUrl}/openai/chat/completions`;
+    const endpoint = `https://api.openai.com/v1/chat/completions`;
     if (openAiConfig.orgId) {
       console.log(identifier, "Using orgId", openAiConfig.orgId);
     }
