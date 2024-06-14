@@ -242,7 +242,7 @@ async function callOpenAIStream(
     const azureConfig = openAiConfig.modelConfigMap[model];
     let endpoint;
     if (azureConfig.endpoint) {
-      endpoint = `${azureConfig.endpoint}/${azureConfig.deployment}/chat/completions?api-version=${azureConfig.apiVersion}`;
+      endpoint = `${azureConfig.endpoint}/openai/deployments/${azureConfig.deployment}/chat/completions?api-version=${azureConfig.apiVersion}`;
     } else {
       endpoint = `${openAiConfig.baseUrl}/azure-openai/${azureConfig.resource}/${azureConfig.deployment}/chat/completions?api-version=${azureConfig.apiVersion}`;
     }
