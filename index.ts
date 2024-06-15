@@ -97,8 +97,7 @@ async function callOpenAiWithRetries(
     identifier,
     "Calling OpenAI API with retries:",
     openAiConfig?.service,
-    openAiPayload.model,
-    openAiConfig?.baseUrl
+    openAiPayload.model
   );
 
   let errorObj: any;
@@ -218,12 +217,10 @@ async function callOpenAIStream(
     : null;
 
   if (!openAiConfig) {
-    const defaultOpenAIBaseUrl = // TODO: Remove this one we have per-provider configs
-      "https://gateway.ai.cloudflare.com/v1/932636fc124abb5171fd630afe668905/igpt";
     openAiConfig = {
       service: "openai",
       apiKey: process.env.OPENAI_API_KEY as string,
-      baseUrl: defaultOpenAIBaseUrl,
+      baseUrl: "",
     };
   }
 
@@ -244,7 +241,7 @@ async function callOpenAIStream(
     if (azureConfig.endpoint) {
       endpoint = `${azureConfig.endpoint}/openai/deployments/${azureConfig.deployment}/chat/completions?api-version=${azureConfig.apiVersion}`;
     } else {
-      endpoint = `${openAiConfig.baseUrl}/azure-openai/${azureConfig.resource}/${azureConfig.deployment}/chat/completions?api-version=${azureConfig.apiVersion}`;
+      throw new Error("Azure OpenAI endpoint is required in modelConfigMap.");
     }
     console.log(identifier, "Using endpoint", endpoint);
 
