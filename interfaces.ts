@@ -2,6 +2,7 @@ export enum ClaudeModel {
   HAIKU = "claude-3-haiku-20240307",
   SONNET = "claude-3-sonnet-20240229",
   OPUS = "claude-3-opus-20240229",
+  SONNET_3_5 = "claude-3-5-sonnet-20240620",
 }
 
 export enum GPTModel {
@@ -199,6 +200,7 @@ export interface AnthropicAIPayload {
   messages: AnthropicAIMessage[];
   functions?: any[]; // TODO type this JSON schema
   temperature?: number;
+  system?: string;
 }
 
 export interface GoogleAITextPart {

@@ -524,6 +524,8 @@ async function callAnthropic(
           input_schema: f.parameters,
           parameters: undefined,
         })),
+        temperature: AiPayload.temperature,
+        system: AiPayload.system,
         max_tokens: 4096,
       },
       {
@@ -607,15 +609,7 @@ function jigAnthropicMessages(
   // Takes a list if messages each with a role and content
 
   // First, changes the role of every system message to "user"
-  let jiggedMessages = messages.map((message) => {
-    if (message.role === "system") {
-      return {
-        role: "user" as const,
-        content: `# CONTEXT ---\n${message.content}\nBefore answering you can reason about the instructions and answer using <thinking></thinking> tags\n---`,
-      };
-    }
-    return message;
-  });
+  let jiggedMessages = messages.slice();
 
   // If the first message is not user, add an empty user message at the start
   if (jiggedMessages[0]?.role !== "user") {
@@ -841,6 +835,11 @@ async function prepareAnthropicPayload(
 
   for (const message of payload.messages) {
     const anthropicContentBlocks: AnthropicContentBlock[] = [];
+
+    if (message.role === "system") {
+      preparedPayload.system = message.content;
+      continue;
+    }
 
     if (message.content) {
       anthropicContentBlocks.push({
