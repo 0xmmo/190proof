@@ -144,7 +144,7 @@ async function callOpenAiWithRetries(
       if (errorCode === "content_policy_violation") {
         console.log(
           identifier,
-          `Switching to OpenAI service due to content policy violation error`
+          `Removing images due to content policy violation error`
         );
         openAiPayload.messages.forEach((message: OpenAIMessage) => {
           if (Array.isArray(message.content)) {
@@ -305,9 +305,9 @@ async function callOpenAIStream(
     const reader = response.body.getReader();
 
     let partialChunk = "";
-    let abortTimeout: NodeJS.Timeout;
+    let abortTimeout: NodeJS.Timeout | null = null;
     const startAbortTimeout = () => {
-      clearTimeout(abortTimeout);
+      abortTimeout && clearTimeout(abortTimeout);
       return setTimeout(() => {
         console.log(
           identifier,
@@ -389,7 +389,7 @@ async function callOpenAIStream(
             );
             const error = new Error("Stream error: OpenAI error") as any;
             error.data = json.error;
-            error.requestBody = openAiPayload;
+            error.requestBody = truncatePayload(openAiPayload);
             throw error;
           }
           if (chunkIndex !== 0)
@@ -429,6 +429,30 @@ async function callOpenAIStream(
   } else {
     throw new Error("Stream error: no response body");
   }
+}
+
+function truncatePayload(payload: OpenAIPayload): string {
+  return JSON.stringify(
+    {
+      ...payload,
+      messages: payload.messages.map((message) => {
+        if (typeof message.content === "string") {
+          message.content = message.content.slice(0, 100);
+        } else if (Array.isArray(message.content)) {
+          message.content = message.content.map((block) => {
+            if (block.type === "image_url") {
+              block.image_url.url = block.image_url.url.slice(0, 100);
+            }
+            return block;
+          });
+        }
+
+        return message;
+      }),
+    },
+    null,
+    2
+  );
 }
 
 async function callAnthropicWithRetries(
