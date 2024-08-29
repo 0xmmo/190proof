@@ -607,8 +607,8 @@ function jigAnthropicMessages(
   messages: AnthropicAIMessage[]
 ): AnthropicAIMessage[] {
   // Takes a list if messages each with a role and content
+  // Assumes no system messages are present
 
-  // First, changes the role of every system message to "user"
   let jiggedMessages = messages.slice();
 
   // If the first message is not user, add an empty user message at the start
@@ -622,7 +622,7 @@ function jigAnthropicMessages(
     ];
   }
 
-  // Then, makes sure that user and assistant messages alternate, where they do not, insert a message with empty content to make them alternate
+  // Group consecutive messages with the same role, combining their content
   jiggedMessages = jiggedMessages.reduce((acc, message) => {
     if (acc.length === 0) {
       return [message];
@@ -630,17 +630,25 @@ function jigAnthropicMessages(
 
     const lastMessage = acc[acc.length - 1];
     if (lastMessage.role === message.role) {
-      return [
-        ...acc,
-        {
-          role:
-            message.role === "user"
-              ? ("assistant" as const)
-              : ("user" as const),
-          content: "...",
-        },
-        message,
+      // Combine content of messages with the same role
+      const lastContent = Array.isArray(lastMessage.content)
+        ? lastMessage.content
+        : [{ type: "text" as const, text: lastMessage.content }];
+      const newContent = Array.isArray(message.content)
+        ? message.content
+        : [{ type: "text" as const, text: message.content }];
+
+      lastMessage.content = [
+        ...lastContent,
+        { type: "text", text: "\n\n---\n\n" },
+        ...newContent,
       ];
+      return acc;
+    }
+
+    // Convert string content to text content block
+    if (typeof message.content === "string") {
+      message.content = [{ type: "text", text: message.content }];
     }
 
     return [...acc, message];

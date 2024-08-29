@@ -108,4 +108,25 @@ describe.each(modelConfigs)("$provider Model", ({ provider, model }) => {
     expect(answer.content).toBeDefined();
     expect(answer.content).toContain("HAHAHAHA");
   });
+
+  test("consecutive user messages", async () => {
+    const aiPayload: GenericPayload = {
+      model,
+      messages: [
+        {
+          role: "user",
+          content: "What color do you get if you mix yellow",
+        },
+        {
+          role: "user",
+          content: "and red?",
+        },
+      ],
+    };
+
+    const answer = await callWithRetries(`${provider}_context`, aiPayload);
+    expect(answer).toBeDefined();
+    expect(answer.content).toBeDefined();
+    expect(answer.content?.toLowerCase()).toContain("orange");
+  });
 });

@@ -6,7 +6,6 @@ export enum ClaudeModel {
 }
 
 export enum GPTModel {
-  // https://huggingface.co/spaces/lmsys/chatbot-arena-leaderboard
   GPT35_0613 = "gpt-3.5-turbo-0613",
   GPT35_0613_16K = "gpt-3.5-turbo-16k-0613",
   GPT35_0125 = "gpt-3.5-turbo-0125",
@@ -14,6 +13,7 @@ export enum GPTModel {
   GPT4_0125_PREVIEW = "gpt-4-0125-preview",
   GPT4_0409 = "gpt-4-turbo-2024-04-09",
   GPT4O = "gpt-4o",
+  GPT4O_MINI = "gpt-4o-mini",
 }
 
 export enum GroqModel {
