@@ -106,13 +106,20 @@ async function callOpenAiWithRetries(
       const timerId = `timer:${identifier}:${Date.now()}:callOpenAi:${
         openAiConfig?.service
       }-${openAiPayload.model}-${openAiConfig?.orgId}`;
-      const res = await callOpenAIStream(
-        identifier,
-        openAiPayload,
-        openAiConfig,
-        chunkTimeoutMs
-      );
-      return res;
+
+      if (
+        openAiPayload.model === GPTModel.O1_MINI ||
+        openAiPayload.model === GPTModel.O1_PREVIEW
+      ) {
+        return await callOpenAI(identifier, openAiPayload, openAiConfig);
+      } else {
+        return await callOpenAIStream(
+          identifier,
+          openAiPayload,
+          openAiConfig,
+          chunkTimeoutMs
+        );
+      }
     } catch (error: any) {
       console.error(error);
       console.error(
@@ -429,6 +436,125 @@ async function callOpenAIStream(
   } else {
     throw new Error("Stream error: no response body");
   }
+}
+
+async function callOpenAI(
+  identifier: string,
+  openAiPayload: OpenAIPayload,
+  openAiConfig: OpenAIConfig | undefined
+): Promise<ParsedResponseMessage> {
+  const functionNames: Set<string> | null = openAiPayload.tools
+    ? new Set(openAiPayload.tools.map((fn) => fn.function.name as string))
+    : null;
+
+  if (!openAiConfig) {
+    openAiConfig = {
+      service: "openai",
+      apiKey: process.env.OPENAI_API_KEY as string,
+      baseUrl: "",
+    };
+  }
+
+  let response;
+  if (openAiConfig.service === "azure") {
+    console.log(identifier, "Using Azure OpenAI service", openAiPayload.model);
+    const model = openAiPayload.model;
+
+    if (!openAiConfig.modelConfigMap) {
+      throw new Error(
+        "OpenAI config modelConfigMap is required when using Azure OpenAI service."
+      );
+    }
+
+    const azureConfig = openAiConfig.modelConfigMap[model];
+    let endpoint;
+    if (azureConfig.endpoint) {
+      endpoint = `${azureConfig.endpoint}/openai/deployments/${azureConfig.deployment}/chat/completions?api-version=${azureConfig.apiVersion}`;
+    } else {
+      throw new Error("Azure OpenAI endpoint is required in modelConfigMap.");
+    }
+    console.log(identifier, "Using endpoint", endpoint);
+
+    try {
+      const stringifiedPayload = JSON.stringify({
+        ...openAiPayload,
+        stream: false,
+      });
+      const parsedPayload = JSON.parse(stringifiedPayload);
+      // You can use parsedPayload if needed
+    } catch (error) {
+      console.error(
+        identifier,
+        "OpenAI JSON parsing error:",
+        JSON.stringify(error)
+      );
+      throw error;
+    }
+
+    response = await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "api-key": azureConfig.apiKey,
+      },
+      body: JSON.stringify({
+        ...openAiPayload,
+        stream: false,
+      }),
+    });
+  } else {
+    // openai by default
+    console.log(identifier, "Using OpenAI service", openAiPayload.model);
+    const endpoint = `https://api.openai.com/v1/chat/completions`;
+    if (openAiConfig.orgId) {
+      console.log(identifier, "Using orgId", openAiConfig.orgId);
+    }
+
+    response = await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${openAiConfig.apiKey}`,
+        ...(openAiConfig.orgId
+          ? { "OpenAI-Organization": openAiConfig.orgId }
+          : {}),
+      },
+      body: JSON.stringify({
+        ...openAiPayload,
+        stream: false,
+      }),
+    });
+  }
+
+  if (!response.ok) {
+    const errorData = await response.json();
+    console.error(identifier, "OpenAI API error:", JSON.stringify(errorData));
+    throw new Error(`OpenAI API Error: ${errorData.error.message}`);
+  }
+
+  const data = await response.json();
+
+  if (!data.choices || !data.choices.length) {
+    if (data.error) {
+      console.error(identifier, "OpenAI error:", JSON.stringify(data.error));
+      throw new Error("OpenAI error: " + data.error.message);
+    }
+    throw new Error("OpenAI error: No choices returned.");
+  }
+
+  const choice = data.choices[0];
+  const functionCall = choice.function_call
+    ? {
+        name: choice.function_call.name,
+        arguments: JSON.parse(choice.function_call.arguments),
+      }
+    : null;
+
+  return {
+    role: "assistant",
+    content: choice.message.content || null,
+    function_call: functionCall,
+  };
 }
 
 function truncatePayload(payload: OpenAIPayload): string {

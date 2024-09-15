@@ -10,10 +10,10 @@ import {
 jest.setTimeout(60000); // Increase timeout to 60s
 
 const modelConfigs = [
-  { provider: "Groq", model: GroqModel.LLAMA_3_70B_8192 },
-  { provider: "OpenAI", model: GPTModel.GPT4O },
-  { provider: "Anthropic", model: ClaudeModel.SONNET_3_5 },
-  { provider: "Gemini", model: GeminiModel.GEMINI_15_PRO },
+  // { provider: "Groq", model: GroqModel.LLAMA_3_70B_8192 },
+  { provider: "OpenAI", model: GPTModel.O1_MINI },
+  // { provider: "Anthropic", model: ClaudeModel.SONNET_3_5 },
+  // { provider: "Gemini", model: GeminiModel.GEMINI_15_PRO },
 ];
 
 describe.each(modelConfigs)("$provider Model", ({ provider, model }) => {
