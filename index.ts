@@ -143,8 +143,6 @@ async function callOpenAiWithRetries(
         );
       }
 
-      // to solve context length issue or JSON parsing error due to truncated response
-      openAiPayload.model = GPTModel.GPT4_0409; // TODO: Remove this
       openAiPayload.temperature = 0.8; // Higher temperature
 
       // Usually due to image content, we get a policy violation error
