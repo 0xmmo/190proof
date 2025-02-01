@@ -16,6 +16,7 @@ export enum GPTModel {
   GPT4O_MINI = "gpt-4o-mini",
   O1_PREVIEW = "o1-preview",
   O1_MINI = "o1-mini",
+  O3_MINI = "o3-mini",
 }
 
 export enum GroqModel {
@@ -23,7 +24,9 @@ export enum GroqModel {
 }
 
 export enum GeminiModel {
-  GEMINI_15_PRO = "gemini-1.5-pro-latest",
+  GEMINI_1_5_PRO = "gemini-1.5-pro-latest",
+  GEMINI_EXP_1206 = "gemini-exp-1206",
+  GEMINI_2_0_FLASH_THINKING_EXP = "gemini-2.0-flash-thinking-exp",
 }
 
 export interface GenericError {
