@@ -18,6 +18,7 @@ import {
   GoogleAIPayload,
   GeminiModel,
   GoogleAIPart,
+  File,
 } from "./interfaces";
 import {
   BedrockRuntimeClient,
@@ -25,6 +26,7 @@ import {
 } from "@aws-sdk/client-bedrock-runtime";
 import axios from "axios";
 import { isHeicImage, timeout } from "./utils";
+import { GoogleGenAI } from "@google/genai";
 const { GoogleGenerativeAI } = require("@google/generative-ai");
 
 const sharp = require("sharp");
@@ -83,6 +85,7 @@ function parseStreamedResponse(
     role: "assistant",
     content: paragraph || null,
     function_call: functionCall,
+    files: [],
   };
 }
 
@@ -552,6 +555,7 @@ async function callOpenAI(
     role: "assistant",
     content: choice.message.content || null,
     function_call: functionCall,
+    files: [],
   };
 }
 
@@ -748,6 +752,7 @@ async function callAnthropic(
     role: "assistant",
     content: textResponse,
     function_call: functionCalls[0],
+    files: [],
   };
 }
 
@@ -896,38 +901,64 @@ async function callGoogleAI(
 ): Promise<ParsedResponseMessage> {
   console.log(identifier, "Calling Google AI API");
 
-  const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-  const model = genAI.getGenerativeModel({
-    model: payload.model,
-    tools: payload.tools,
-    systemInstruction: payload.systemInstruction,
-  });
-
   const history = payload.messages.slice(0, -1);
   const lastMessage = payload.messages.slice(-1)[0];
-  const chat = model.startChat({
-    history,
+
+  const genAI = new GoogleGenAI({
+    apiKey: process.env.GEMINI_API_KEY,
   });
 
-  const result = await chat.sendMessage(lastMessage.parts);
-  const response = await result.response;
+  const chat = genAI.chats.create({
+    model: payload.model,
+    history,
+    config: {
+      responseModalities: ["Text", "Image"],
+      tools: payload.tools ? [payload.tools] : undefined,
+      systemInstruction: payload.systemInstruction,
+    },
+  });
 
-  const text: string | undefined = response.text();
+  const response = await chat.sendMessage({
+    message: lastMessage.parts,
+  });
+
+  console.log(identifier, "Google AI API response:", response);
+
+  let text: string = "";
+  const files: File[] = [];
+
+  for (const part of response.candidates?.[0]?.content?.parts || []) {
+    if (part.text) {
+      text += part.text;
+    }
+
+    if (part.inlineData) {
+      const imageData = part.inlineData.data;
+      if (imageData) {
+        files.push({
+          mimeType: "image/png",
+          data: imageData,
+        });
+      }
+    }
+  }
+
   const functionCalls:
     | {
-        name: string;
-        args: Record<string, any>;
+        name?: string;
+        args?: Record<string, any>;
       }[]
-    | undefined = response.functionCalls();
+    | undefined = response.functionCalls;
 
   const parsedFunctionCalls = functionCalls?.map((fc) => ({
-    name: fc.name,
-    arguments: fc.args,
+    name: fc.name ?? "",
+    arguments: fc.args ?? {},
   }));
 
   return {
     role: "assistant",
     content: text || null,
+    files,
     function_call: parsedFunctionCalls?.[0] || null,
   };
 }
@@ -1214,6 +1245,7 @@ async function callGroq(
     role: "assistant",
     content: textResponse,
     function_call: functionCall,
+    files: [],
   };
 }
 

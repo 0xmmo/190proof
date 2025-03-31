@@ -21,11 +21,14 @@ export enum GPTModel {
 
 export enum GroqModel {
   LLAMA_3_70B_8192 = "llama3-70b-8192",
+  DEEPSEEK_R1_DISTILL_LLAMA_70B = "deepseek-r1-distill-llama-70b",
 }
 
 export enum GeminiModel {
   GEMINI_1_5_PRO = "gemini-1.5-pro-latest",
   GEMINI_EXP_1206 = "gemini-exp-1206",
+  GEMINI_2_0_FLASH = "gemini-2.0-flash",
+  GEMINI_2_0_FLASH_EXP_IMAGE_GENERATION = "gemini-2.0-flash-exp-image-generation",
   GEMINI_2_0_FLASH_THINKING_EXP = "gemini-2.0-flash-thinking-exp",
 }
 
@@ -123,6 +126,7 @@ export interface ParsedResponseMessage {
   role: "assistant";
   content: string | null;
   function_call: FunctionCall | null;
+  files: File[];
 }
 
 export interface FunctionCall {

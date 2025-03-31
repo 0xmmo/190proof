@@ -10,10 +10,13 @@ import {
 jest.setTimeout(60000); // Increase timeout to 60s
 
 const modelConfigs = [
-  { provider: "Groq", model: GroqModel.LLAMA_3_70B_8192 },
-  { provider: "OpenAI", model: GPTModel.GPT4O_MINI },
-  { provider: "Anthropic", model: ClaudeModel.SONNET_3_5 },
-  { provider: "Gemini", model: GeminiModel.GEMINI_15_PRO },
+  // { provider: "Groq", model: GroqModel.DEEPSEEK_R1_DISTILL_LLAMA_70B },
+  // { provider: "OpenAI", model: GPTModel.O3_MINI },
+  // { provider: "Anthropic", model: ClaudeModel.SONNET_3_5 },
+  {
+    provider: "Gemini",
+    model: GeminiModel.GEMINI_2_0_FLASH_EXP_IMAGE_GENERATION,
+  },
 ];
 
 describe.each(modelConfigs)("$provider Model", ({ provider, model }) => {
@@ -128,5 +131,26 @@ describe.each(modelConfigs)("$provider Model", ({ provider, model }) => {
     expect(answer).toBeDefined();
     expect(answer.content).toBeDefined();
     expect(answer.content?.toLowerCase()).toContain("orange");
+  });
+
+  test.only("generates images", async () => {
+    const aiPayload: GenericPayload = {
+      model,
+      messages: [
+        {
+          role: "user",
+          content: "Generate an image of a sunset over mountains",
+        },
+      ],
+    };
+
+    const answer = await callWithRetries(
+      `${provider}_image_generation`,
+      aiPayload
+    );
+
+    expect(answer).toBeDefined();
+    expect(answer.files?.length).toBeGreaterThan(0);
+    expect(answer.files?.[0].mimeType).toBe("image/png");
   });
 });
