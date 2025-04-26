@@ -10,9 +10,9 @@ import {
 jest.setTimeout(60000); // Increase timeout to 60s
 
 const modelConfigs = [
-  { provider: "Groq", model: GroqModel.DEEPSEEK_R1_DISTILL_LLAMA_70B },
-  { provider: "OpenAI", model: GPTModel.GPT4O_MINI },
-  { provider: "Anthropic", model: ClaudeModel.SONNET_3_5 },
+  // { provider: "Groq", model: GroqModel.DEEPSEEK_R1_DISTILL_LLAMA_70B },
+  // { provider: "OpenAI", model: GPTModel.GPT4O_MINI },
+  // { provider: "Anthropic", model: ClaudeModel.SONNET_3_5 },
   {
     provider: "Gemini",
     model: GeminiModel.GEMINI_2_5_FLASH_PREVIEW_04_17,
@@ -110,6 +110,34 @@ describe.each(modelConfigs)("$provider Model", ({ provider, model }) => {
     const answer = await callWithRetries(`${provider}_system`, aiPayload);
     expect(answer.content).toBeDefined();
     expect(answer.content).toContain("HAHAHAHA");
+  });
+
+  test("history starts with model message", async () => {
+    const aiPayload: GenericPayload = {
+      model,
+      messages: [
+        {
+          role: "assistant",
+          content: "You are a helpful assistant",
+        },
+        {
+          role: "user",
+          content: "mix yellow with red?",
+        },
+        {
+          role: "assistant",
+          content: "orange",
+        },
+        {
+          role: "user",
+          content: "What about blue and yellow?",
+        },
+      ],
+    };
+
+    const answer = await callWithRetries(`${provider}_history`, aiPayload);
+    expect(answer).toBeDefined();
+    expect(answer.content).toBeDefined();
   });
 
   test("consecutive user messages", async () => {

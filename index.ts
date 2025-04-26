@@ -820,10 +820,10 @@ function jigAnthropicMessages(
 }
 
 function jigGoogleMessages(messages: GoogleAIMessage[]): GoogleAIMessage[] {
-  let jiggedMessages = [...messages];
+  let jiggedMessages = messages.slice();
 
-  // If first message is assistant, add empty user message before it
-  if (jiggedMessages?.[0]?.role === "model") {
+  // If the first message is model, add an empty user message at the start
+  if (jiggedMessages[0]?.role === "model") {
     jiggedMessages = [
       {
         role: "user" as const,
@@ -833,7 +833,7 @@ function jigGoogleMessages(messages: GoogleAIMessage[]): GoogleAIMessage[] {
     ];
   }
 
-  // Group consecutive messages with the same role, combining their content
+  // Group consecutive messages with the same role, combining their parts
   jiggedMessages = jiggedMessages.reduce((acc, message) => {
     if (acc.length === 0) {
       return [message];
@@ -841,7 +841,6 @@ function jigGoogleMessages(messages: GoogleAIMessage[]): GoogleAIMessage[] {
 
     const lastMessage = acc[acc.length - 1];
     if (lastMessage.role === message.role) {
-      // Combine text content of messages with the same role
       lastMessage.parts = [...lastMessage.parts, ...message.parts];
       return acc;
     }
@@ -849,7 +848,7 @@ function jigGoogleMessages(messages: GoogleAIMessage[]): GoogleAIMessage[] {
     return [...acc, message];
   }, [] as GoogleAIMessage[]);
 
-  // If last message in array is assistant, then add an empty user message
+  // If last message in array is model, then add an empty user message
   if (jiggedMessages[jiggedMessages.length - 1]?.role === "model") {
     jiggedMessages.push({
       role: "user",
@@ -942,9 +941,10 @@ async function callGoogleAI(
   payload: GoogleAIPayload
 ): Promise<ParsedResponseMessage> {
   console.log(identifier, "Calling Google AI API");
+  const googleMessages = jigGoogleMessages(payload.messages);
 
-  const history = payload.messages.slice(0, -1);
-  const lastMessage = payload.messages.slice(-1)[0];
+  const history = googleMessages.slice(0, -1);
+  const lastMessage = googleMessages.slice(-1)[0];
 
   const genAI = new GoogleGenAI({
     apiKey: process.env.GEMINI_API_KEY,
