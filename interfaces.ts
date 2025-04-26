@@ -30,6 +30,8 @@ export enum GeminiModel {
   GEMINI_2_0_FLASH = "gemini-2.0-flash",
   GEMINI_2_0_FLASH_EXP_IMAGE_GENERATION = "gemini-2.0-flash-exp-image-generation",
   GEMINI_2_0_FLASH_THINKING_EXP = "gemini-2.0-flash-thinking-exp",
+  GEMINI_2_0_FLASH_THINKING_EXP_01_21 = "gemini-2.0-flash-thinking-exp-01-21",
+  GEMINI_2_5_FLASH_PREVIEW_04_17 = "gemini-2.5-flash-preview-04-17",
 }
 
 export interface GenericError {

@@ -10,12 +10,12 @@ import {
 jest.setTimeout(60000); // Increase timeout to 60s
 
 const modelConfigs = [
-  // { provider: "Groq", model: GroqModel.DEEPSEEK_R1_DISTILL_LLAMA_70B },
-  // { provider: "OpenAI", model: GPTModel.O3_MINI },
-  // { provider: "Anthropic", model: ClaudeModel.SONNET_3_5 },
+  { provider: "Groq", model: GroqModel.DEEPSEEK_R1_DISTILL_LLAMA_70B },
+  { provider: "OpenAI", model: GPTModel.GPT4O_MINI },
+  { provider: "Anthropic", model: ClaudeModel.SONNET_3_5 },
   {
     provider: "Gemini",
-    model: GeminiModel.GEMINI_2_0_FLASH_EXP_IMAGE_GENERATION,
+    model: GeminiModel.GEMINI_2_5_FLASH_PREVIEW_04_17,
   },
 ];
 
@@ -122,7 +122,15 @@ describe.each(modelConfigs)("$provider Model", ({ provider, model }) => {
         },
         {
           role: "user",
-          content: "and red?",
+          content: "with red?",
+        },
+        {
+          role: "assistant",
+          content: "orange",
+        },
+        {
+          role: "user",
+          content: "What about blue and yellow?",
         },
       ],
     };
@@ -130,10 +138,10 @@ describe.each(modelConfigs)("$provider Model", ({ provider, model }) => {
     const answer = await callWithRetries(`${provider}_context`, aiPayload);
     expect(answer).toBeDefined();
     expect(answer.content).toBeDefined();
-    expect(answer.content?.toLowerCase()).toContain("orange");
+    expect(answer.content?.toLowerCase()).toContain("green");
   });
 
-  test.only("generates images", async () => {
+  test("generates images", async () => {
     const aiPayload: GenericPayload = {
       model,
       messages: [

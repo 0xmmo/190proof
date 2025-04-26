@@ -19,6 +19,7 @@ import {
   GeminiModel,
   GoogleAIPart,
   File,
+  GoogleAIMessage,
 } from "./interfaces";
 import {
   BedrockRuntimeClient,
@@ -818,6 +819,47 @@ function jigAnthropicMessages(
   return jiggedMessages;
 }
 
+function jigGoogleMessages(messages: GoogleAIMessage[]): GoogleAIMessage[] {
+  let jiggedMessages = [...messages];
+
+  // If first message is assistant, add empty user message before it
+  if (jiggedMessages?.[0]?.role === "model") {
+    jiggedMessages = [
+      {
+        role: "user" as const,
+        parts: [{ text: "..." }],
+      },
+      ...jiggedMessages,
+    ];
+  }
+
+  // Group consecutive messages with the same role, combining their content
+  jiggedMessages = jiggedMessages.reduce((acc, message) => {
+    if (acc.length === 0) {
+      return [message];
+    }
+
+    const lastMessage = acc[acc.length - 1];
+    if (lastMessage.role === message.role) {
+      // Combine text content of messages with the same role
+      lastMessage.parts = [...lastMessage.parts, ...message.parts];
+      return acc;
+    }
+
+    return [...acc, message];
+  }, [] as GoogleAIMessage[]);
+
+  // If last message in array is assistant, then add an empty user message
+  if (jiggedMessages[jiggedMessages.length - 1]?.role === "model") {
+    jiggedMessages.push({
+      role: "user",
+      parts: [{ text: "..." }],
+    });
+  }
+
+  return jiggedMessages;
+}
+
 async function prepareGoogleAIPayload(
   payload: GenericPayload
 ): Promise<GoogleAIPayload> {
@@ -908,11 +950,13 @@ async function callGoogleAI(
     apiKey: process.env.GEMINI_API_KEY,
   });
 
+  console.log(identifier, "Google AI API payload:", history);
+
   const chat = genAI.chats.create({
     model: payload.model,
     history,
     config: {
-      responseModalities: ["Text", "Image"],
+      // responseModalities: ["Text", "Image"],
       tools: payload.tools ? [payload.tools] : undefined,
       systemInstruction: payload.systemInstruction,
     },
@@ -921,8 +965,6 @@ async function callGoogleAI(
   const response = await chat.sendMessage({
     message: lastMessage.parts,
   });
-
-  console.log(identifier, "Google AI API response:", response);
 
   let text: string = "";
   const files: File[] = [];
