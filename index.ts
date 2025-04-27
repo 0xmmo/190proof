@@ -996,6 +996,15 @@ async function callGoogleAI(
     arguments: fc.args ?? {},
   }));
 
+  if (!text && !parsedFunctionCalls?.length && !files.length) {
+    console.error(
+      identifier,
+      "Missing text & fns in Google AI API response:",
+      response
+    );
+    throw new Error("Missing text & fns in Google AI API response");
+  }
+
   return {
     role: "assistant",
     content: text || null,
