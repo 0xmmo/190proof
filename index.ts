@@ -942,6 +942,7 @@ async function callGoogleAI(
 ): Promise<ParsedResponseMessage> {
   console.log(identifier, "Calling Google AI API");
   const googleMessages = jigGoogleMessages(payload.messages);
+  console.log(identifier, "Google AI API messages:", googleMessages);
 
   const history = googleMessages.slice(0, -1);
   const lastMessage = googleMessages.slice(-1)[0];
@@ -950,13 +951,11 @@ async function callGoogleAI(
     apiKey: process.env.GEMINI_API_KEY,
   });
 
-  console.log(identifier, "Google AI API payload:", history);
-
   const chat = genAI.chats.create({
     model: payload.model,
     history,
     config: {
-      // responseModalities: ["Text", "Image"],
+      responseModalities: ["Text"],
       tools: payload.tools ? [payload.tools] : undefined,
       systemInstruction: payload.systemInstruction,
     },
