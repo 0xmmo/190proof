@@ -908,6 +908,10 @@ async function prepareGoogleAIPayload(
             data: await getNormalizedBase64PNG(file.url, file.mimeType),
           },
         });
+        // Add the URL as a text part
+        googleAIContentParts.push({
+          text: `Image URL: ${file.url}`,
+        });
       } else if (file.data) {
         if (
           !["image/png", "image/jpeg", "image/gif", "image/webp"].includes(
