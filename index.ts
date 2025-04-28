@@ -1013,6 +1013,39 @@ async function callGoogleAI(
   };
 }
 
+async function callGoogleAIWithRetries(
+  identifier: string,
+  payload: GoogleAIPayload,
+  retries: number = 5
+): Promise<ParsedResponseMessage> {
+  console.log(identifier, "Calling Google AI API with retries");
+
+  let lastError: any;
+  for (let i = 0; i < retries; i++) {
+    try {
+      return await callGoogleAI(identifier, payload);
+    } catch (e: any) {
+      lastError = e;
+      console.error(e);
+      console.error(
+        identifier,
+        `Retrying due to error: received bad response from Google AI API: ${e.message}`,
+        JSON.stringify(e) // Google AI errors might not have a response.data structure like others
+      );
+
+      // Add any specific Google AI error handling or payload modifications here if needed
+      // e.g., if (e.status === 429) { /* handle rate limit */ }
+
+      await timeout(125 * i); // Exponential backoff
+    }
+  }
+  const error = new Error(
+    `Failed to call Google AI API after ${retries} attempts`
+  ) as any;
+  error.cause = lastError; // Attach the last caught error
+  throw error;
+}
+
 export async function callWithRetries(
   identifier: string,
   aiPayload: GenericPayload,
@@ -1047,9 +1080,10 @@ export async function callWithRetries(
     );
   } else if (isGoogleAIPayload(aiPayload)) {
     console.log(identifier, "Delegating call to Google AI API");
-    return await callGoogleAI(
+    return await callGoogleAIWithRetries(
       identifier,
-      await prepareGoogleAIPayload(aiPayload)
+      await prepareGoogleAIPayload(aiPayload),
+      retries
     );
   } else {
     throw new Error("Invalid AI payload: Unknown model type.");
