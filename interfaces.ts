@@ -17,6 +17,9 @@ export enum GPTModel {
   O1_PREVIEW = "o1-preview",
   O1_MINI = "o1-mini",
   O3_MINI = "o3-mini",
+  GPT4_1 = "gpt-4.1",
+  GPT4_1_MINI = "gpt-4.1-mini",
+  GPT4_1_NANO = "gpt-4.1-nano",
 }
 
 export enum GroqModel {
