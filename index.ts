@@ -1214,6 +1214,11 @@ async function prepareOpenAIPayload(
               url: file.url,
             },
           });
+          // Add the URL as a text part
+          openAIContentBlocks.push({
+            type: "text",
+            text: `Image URL: ${file.url}`,
+          });
         } else if (file.data) {
           openAIContentBlocks.push({
             type: "image_url",
