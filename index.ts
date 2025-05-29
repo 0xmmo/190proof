@@ -593,13 +593,7 @@ async function callAnthropicWithRetries(
   console.log(identifier, "Calling Anthropic API with retries");
   let lastResponse;
   for (let i = 0; i < attempts; i++) {
-    // if last attempt
-    if (i === attempts - 1) {
-      AiPayload.model = ClaudeModel.SONNET; // fallback to sonnet model
-    }
-
     try {
-      // return await callAnthropic(identifier, AiPayload);
       lastResponse = await callAnthropic(identifier, AiPayload, AiConfig);
       return lastResponse;
     } catch (e: any) {
@@ -611,8 +605,7 @@ async function callAnthropicWithRetries(
       );
 
       if (e.response?.data?.error?.type === "rate_limit_error") {
-        // upgrade to Sonnet
-        AiPayload.model = ClaudeModel.SONNET;
+        // TODO: upgrade model or fallback to bedrock
       }
 
       await timeout(125 * i);

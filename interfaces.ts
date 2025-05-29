@@ -1,8 +1,10 @@
 export enum ClaudeModel {
-  HAIKU = "claude-3-haiku-20240307",
-  SONNET = "claude-3-sonnet-20240229",
-  OPUS = "claude-3-opus-20240229",
+  HAIKU_3 = "claude-3-haiku-20240307",
+  SONNET_3 = "claude-3-sonnet-20240229",
+  OPUS_3 = "claude-3-opus-20240229",
   SONNET_3_5 = "claude-3-5-sonnet-20241022",
+  SONNET_4 = "claude-sonnet-4-20250514",
+  OPUS_4 = "claude-opus-4-20250514",
 }
 
 export enum GPTModel {

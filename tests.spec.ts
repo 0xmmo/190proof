@@ -12,7 +12,7 @@ jest.setTimeout(60000); // Increase timeout to 60s
 const modelConfigs = [
   // { provider: "Groq", model: GroqModel.DEEPSEEK_R1_DISTILL_LLAMA_70B },
   { provider: "OpenAI", model: GPTModel.GPT4_1_MINI },
-  // { provider: "Anthropic", model: ClaudeModel.SONNET_3_5 },
+  { provider: "Anthropic", model: ClaudeModel.OPUS_4 },
   // {
   //   provider: "Gemini",
   //   model: GeminiModel.GEMINI_2_5_FLASH_PREVIEW_04_17,
