@@ -147,8 +147,6 @@ async function callOpenAiWithRetries(
         );
       }
 
-      openAiPayload.temperature = 0.8; // Higher temperature
-
       // Usually due to image content, we get a policy violation error
       if (errorCode === "content_policy_violation") {
         console.log(
@@ -1172,7 +1170,6 @@ async function prepareOpenAIPayload(
 ): Promise<OpenAIPayload> {
   const preparedPayload: OpenAIPayload = {
     model: payload.model as GPTModel,
-    temperature: payload.temperature,
     messages: [],
     tools: payload.functions?.map((fn) => ({
       type: "function",

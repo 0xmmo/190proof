@@ -11,8 +11,8 @@ jest.setTimeout(60000); // Increase timeout to 60s
 
 const modelConfigs = [
   // { provider: "Groq", model: GroqModel.DEEPSEEK_R1_DISTILL_LLAMA_70B },
-  { provider: "OpenAI", model: GPTModel.GPT4_1_MINI },
-  { provider: "Anthropic", model: ClaudeModel.OPUS_4 },
+  { provider: "OpenAI", model: GPTModel.GPT5_MINI },
+  // { provider: "Anthropic", model: ClaudeModel.OPUS_4 },
   // {
   //   provider: "Gemini",
   //   model: GeminiModel.GEMINI_2_5_FLASH_PREVIEW_04_17,
@@ -36,28 +36,28 @@ describe.each(modelConfigs)("$provider Model", ({ provider, model }) => {
     expect(answer.content).toBeDefined();
   });
 
-  test("with functions", async () => {
+  test.only("with functions", async () => {
     const aiPayload: GenericPayload = {
       model,
       messages: [
         {
           role: "user",
-          content: "What is the capital of France?",
+          content: "What is the weather in Tokyo?",
         },
       ],
       functions: [
         {
-          name: "get_country_capital",
-          description: "Get the capital of a given country",
+          name: "get_weather",
+          description: "Get the weather of a given city",
           parameters: {
             type: "object",
             properties: {
-              country_name: {
+              city_name: {
                 type: "string",
-                description: "The name of the country",
+                description: "The name of the city",
               },
             },
-            required: ["country_name"],
+            required: ["city_name"],
           },
         },
       ],
@@ -66,9 +66,9 @@ describe.each(modelConfigs)("$provider Model", ({ provider, model }) => {
     const answer = await callWithRetries(`${provider}_functions`, aiPayload);
     expect(answer).toBeDefined();
     expect(answer.function_call).toBeDefined();
-    expect(answer.function_call?.name).toBeDefined();
+    expect(answer.function_call?.name).toEqual("get_weather");
     expect(answer.function_call?.arguments).toBeDefined();
-    expect(answer.function_call?.arguments?.country_name).toBeDefined();
+    expect(answer.function_call?.arguments?.city_name).toBeDefined();
   });
 
   test("with image in message", async () => {

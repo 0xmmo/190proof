@@ -22,6 +22,8 @@ export enum GPTModel {
   GPT4_1 = "gpt-4.1",
   GPT4_1_MINI = "gpt-4.1-mini",
   GPT4_1_NANO = "gpt-4.1-nano",
+  GPT5 = "gpt-5",
+  GPT5_MINI = "gpt-5-mini",
 }
 
 export enum GroqModel {
@@ -208,7 +210,6 @@ export interface OpenAIPayload {
     | "none"
     | "auto"
     | { type: "function"; function: { name: string } };
-  temperature?: number;
 }
 
 export interface AnthropicAIPayload {
