@@ -1195,8 +1195,15 @@ async function prepareOpenAIPayload(
       });
     }
 
+    const allowedFileMimeTypes = [
+      "image/png",
+      "image/jpeg",
+      "image/gif",
+      "image/webp",
+    ];
+
     for (const file of message.files || []) {
-      if (file.mimeType?.startsWith("image")) {
+      if (allowedFileMimeTypes.includes(file.mimeType)) {
         if (file.url) {
           openAIContentBlocks.push({
             type: "image_url",
@@ -1235,7 +1242,7 @@ async function prepareOpenAIPayload(
         //   }
       } else {
         console.warn(
-          "Skipping file. Type not supported by OpenAI API:",
+          "Skipping file in message. File or image type not supported by OpenAI API:",
           file.mimeType
         );
       }
