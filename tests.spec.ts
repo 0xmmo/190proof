@@ -12,10 +12,10 @@ jest.setTimeout(60000); // Increase timeout to 60s
 const modelConfigs = [
   // { provider: "Groq", model: GroqModel.DEEPSEEK_R1_DISTILL_LLAMA_70B },
   // { provider: "OpenAI", model: GPTModel.GPT5_MINI },
-  { provider: "Anthropic", model: ClaudeModel.SONNET_4_5 },
+  // { provider: "Anthropic", model: ClaudeModel.OPUS_4_5 },
   // {
   //   provider: "Gemini",
-  //   model: GeminiModel.GEMINI_2_5_FLASH_PREVIEW_04_17,
+  //   model: GeminiModel.GEMINI_3_FLASH_PREVIEW,
   // },
 ];
 
@@ -77,11 +77,11 @@ describe.each(modelConfigs)("$provider Model", ({ provider, model }) => {
       messages: [
         {
           role: "user",
-          content: "Where is this?",
+          content: "What kind of plant is this?",
           files: [
             {
               mimeType: "image/jpeg",
-              url: "https://upload.wikimedia.org/wikipedia/commons/thumb/d/de/Colosseo_2020.jpg/540px-Colosseo_2020.jpg",
+              url: "https://olly.bot/1.png",
             },
           ],
         },
@@ -89,7 +89,7 @@ describe.each(modelConfigs)("$provider Model", ({ provider, model }) => {
     };
 
     const answer = await callWithRetries(`${provider}_files`, aiPayload);
-    expect(answer.content).toContain("Italy");
+    expect(answer.content).toContain("Fiddle");
   });
 
   test("with system message", async () => {

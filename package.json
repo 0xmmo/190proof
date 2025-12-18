@@ -9,7 +9,8 @@
     "dist"
   ],
   "scripts": {
-    "test": "jest --watch --runInBand",
+    "test": "jest --runInBand",
+    "test:watch": "jest --watch --runInBand",
     "build": "tsup",
     "send": "npm run build && git add . && git commit -am checkpoint && npm version patch && npm publish"
   },

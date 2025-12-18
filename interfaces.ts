@@ -6,6 +6,7 @@ export enum ClaudeModel {
   SONNET_4 = "claude-sonnet-4-20250514",
   OPUS_4 = "claude-opus-4-20250514",
   SONNET_4_5 = "claude-sonnet-4-5",
+  OPUS_4_5 = "claude-opus-4-5",
 }
 
 export enum GPTModel {
@@ -40,6 +41,7 @@ export enum GeminiModel {
   GEMINI_2_0_FLASH_THINKING_EXP = "gemini-2.0-flash-thinking-exp",
   GEMINI_2_0_FLASH_THINKING_EXP_01_21 = "gemini-2.0-flash-thinking-exp-01-21",
   GEMINI_2_5_FLASH_PREVIEW_04_17 = "gemini-2.5-flash-preview-04-17",
+  GEMINI_3_FLASH_PREVIEW = "gemini-3-flash-preview",
 }
 
 export interface GenericError {
