@@ -31,7 +31,7 @@ describe.each(modelConfigs)("$provider Model", ({ provider, model }) => {
       ],
     };
 
-    const answer = await callWithRetries(`${provider}_standard`, aiPayload);
+    const answer = await callWithRetries([provider, "standard"], aiPayload);
     expect(answer).toBeDefined();
     expect(answer.content).toBeDefined();
   });
@@ -63,7 +63,7 @@ describe.each(modelConfigs)("$provider Model", ({ provider, model }) => {
       ],
     };
 
-    const answer = await callWithRetries(`${provider}_functions`, aiPayload);
+    const answer = await callWithRetries([provider, "functions"], aiPayload);
     expect(answer).toBeDefined();
     expect(answer.function_call).toBeDefined();
     expect(answer.function_call?.name).toEqual("get_weather");
@@ -88,7 +88,7 @@ describe.each(modelConfigs)("$provider Model", ({ provider, model }) => {
       ],
     };
 
-    const answer = await callWithRetries(`${provider}_files`, aiPayload);
+    const answer = await callWithRetries([provider, "files"], aiPayload);
     expect(answer.content).toContain("Fiddle");
   });
 
@@ -107,7 +107,7 @@ describe.each(modelConfigs)("$provider Model", ({ provider, model }) => {
       ],
     };
 
-    const answer = await callWithRetries(`${provider}_system`, aiPayload);
+    const answer = await callWithRetries([provider, "system"], aiPayload);
     expect(answer.content).toBeDefined();
     expect(answer.content).toContain("HAHAHAHA");
   });
@@ -135,7 +135,7 @@ describe.each(modelConfigs)("$provider Model", ({ provider, model }) => {
       ],
     };
 
-    const answer = await callWithRetries(`${provider}_history`, aiPayload);
+    const answer = await callWithRetries([provider, "history"], aiPayload);
     expect(answer).toBeDefined();
     expect(answer.content).toBeDefined();
   });
@@ -163,7 +163,7 @@ describe.each(modelConfigs)("$provider Model", ({ provider, model }) => {
       ],
     };
 
-    const answer = await callWithRetries(`${provider}_context`, aiPayload);
+    const answer = await callWithRetries([provider, "context"], aiPayload);
     expect(answer).toBeDefined();
     expect(answer.content).toBeDefined();
     expect(answer.content?.toLowerCase()).toContain("green");
@@ -181,7 +181,7 @@ describe.each(modelConfigs)("$provider Model", ({ provider, model }) => {
     };
 
     const answer = await callWithRetries(
-      `${provider}_image_generation`,
+      [provider, "image_generation"],
       aiPayload
     );
 

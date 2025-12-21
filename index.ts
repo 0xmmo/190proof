@@ -21,7 +21,7 @@ import {
   File,
   GoogleAIMessage,
 } from "./interfaces";
-import logger from "./logger";
+import logger, { Identifier } from "./logger";
 import {
   BedrockRuntimeClient,
   InvokeModelCommand,
@@ -46,7 +46,7 @@ export {
 } from "./interfaces";
 
 function parseStreamedResponse(
-  identifier: string,
+  identifier: Identifier,
   paragraph: string,
   functionCallName: string,
   functionCallArgs: string,
@@ -92,7 +92,7 @@ function parseStreamedResponse(
 }
 
 async function callOpenAiWithRetries(
-  identifier: string,
+  identifier: Identifier,
   openAiPayload: OpenAIPayload,
   openAiConfig?: OpenAIConfig,
   retries: number = 5,
@@ -189,7 +189,7 @@ async function callOpenAiWithRetries(
 }
 
 async function callOpenAIStream(
-  identifier: string,
+  identifier: Identifier,
   openAiPayload: OpenAIPayload,
   openAiConfig: OpenAIConfig | undefined,
   chunkTimeoutMs: number
@@ -385,7 +385,7 @@ async function callOpenAIStream(
 }
 
 async function callOpenAI(
-  identifier: string,
+  identifier: Identifier,
   openAiPayload: OpenAIPayload,
   openAiConfig: OpenAIConfig | undefined
 ): Promise<ParsedResponseMessage> {
@@ -525,7 +525,7 @@ function truncatePayload(payload: OpenAIPayload): string {
 }
 
 async function callAnthropicWithRetries(
-  identifier: string,
+  identifier: Identifier,
   AiPayload: AnthropicAIPayload,
   AiConfig?: AnthropicAIConfig,
   attempts = 5
@@ -558,7 +558,7 @@ async function callAnthropicWithRetries(
 }
 
 async function callAnthropic(
-  identifier: string,
+  identifier: Identifier,
   AiPayload: AnthropicAIPayload,
   AiConfig?: AnthropicAIConfig
 ): Promise<ParsedResponseMessage> {
@@ -867,7 +867,7 @@ async function prepareGoogleAIPayload(
 }
 
 async function callGoogleAI(
-  identifier: string,
+  identifier: Identifier,
   payload: GoogleAIPayload
 ): Promise<ParsedResponseMessage> {
   logger.log(identifier, "Calling Google AI API");
@@ -939,7 +939,7 @@ async function callGoogleAI(
 }
 
 async function callGoogleAIWithRetries(
-  identifier: string,
+  identifier: Identifier,
   payload: GoogleAIPayload,
   retries: number = 5
 ): Promise<ParsedResponseMessage> {
@@ -967,40 +967,41 @@ async function callGoogleAIWithRetries(
 }
 
 export async function callWithRetries(
-  identifier: string,
+  identifier: string | string[],
   aiPayload: GenericPayload,
   aiConfig?: OpenAIConfig | AnthropicAIConfig,
   retries: number = 5,
   chunkTimeoutMs: number = 15_000
 ): Promise<ParsedResponseMessage> {
+  const id = identifier;
   // Determine which service to use based on the model type
   if (isAnthropicPayload(aiPayload)) {
-    logger.log(identifier, "Delegating call to Anthropic API");
+    logger.log(id, "Delegating call to Anthropic API");
     return await callAnthropicWithRetries(
-      identifier,
+      id,
       await prepareAnthropicPayload(aiPayload),
       aiConfig as AnthropicAIConfig,
       retries
     );
   } else if (isOpenAiPayload(aiPayload)) {
-    logger.log(identifier, "Delegating call to OpenAI API");
+    logger.log(id, "Delegating call to OpenAI API");
     return await callOpenAiWithRetries(
-      identifier,
+      id,
       await prepareOpenAIPayload(aiPayload),
       aiConfig as OpenAIConfig,
       retries,
       chunkTimeoutMs
     );
   } else if (isGroqPayload(aiPayload)) {
-    logger.log(identifier, "Delegating call to Groq API");
+    logger.log(id, "Delegating call to Groq API");
     return await callGroqWithRetries(
-      identifier,
+      id,
       await prepareGroqPayload(aiPayload)
     );
   } else if (isGoogleAIPayload(aiPayload)) {
-    logger.log(identifier, "Delegating call to Google AI API");
+    logger.log(id, "Delegating call to Google AI API");
     return await callGoogleAIWithRetries(
-      identifier,
+      id,
       await prepareGoogleAIPayload(aiPayload),
       retries
     );
@@ -1218,7 +1219,7 @@ function isGoogleAIPayload(payload: any): Boolean {
 }
 
 async function callGroq(
-  identifier: string,
+  identifier: Identifier,
   payload: GroqPayload
 ): Promise<ParsedResponseMessage> {
   const response = await axios.post(
@@ -1259,7 +1260,7 @@ async function callGroq(
 }
 
 async function callGroqWithRetries(
-  identifier: string,
+  identifier: Identifier,
   payload: GroqPayload,
   retries: number = 5
 ): Promise<ParsedResponseMessage> {
