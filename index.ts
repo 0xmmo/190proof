@@ -21,6 +21,7 @@ import {
   File,
   GoogleAIMessage,
 } from "./interfaces";
+import logger from "./logger";
 import {
   BedrockRuntimeClient,
   InvokeModelCommand,
@@ -66,13 +67,13 @@ function parseStreamedResponse(
         arguments: JSON.parse(functionCallArgs),
       };
     } catch (error) {
-      console.error("Error parsing functionCallArgs:", functionCallArgs);
+      logger.error(identifier, "Error parsing functionCallArgs:", functionCallArgs);
       throw error;
     }
   }
 
   if (!paragraph && !functionCall) {
-    console.error(
+    logger.error(
       identifier,
       "Stream error: received message without content or function_call, raw:",
       JSON.stringify({ paragraph, functionCallName, functionCallArgs })
@@ -97,7 +98,7 @@ async function callOpenAiWithRetries(
   retries: number = 5,
   chunkTimeoutMs: number = 15_000
 ): Promise<ParsedResponseMessage> {
-  console.log(
+  logger.log(
     identifier,
     "Calling OpenAI API with retries:",
     openAiConfig?.service,
@@ -125,34 +126,17 @@ async function callOpenAiWithRetries(
         );
       }
     } catch (error: any) {
-      console.error(error);
-      console.error(
+      logger.error(
         identifier,
-        `Retrying due to error: received bad response from OpenAI API [${
-          openAiConfig?.service
-        }-${openAiPayload.model}-${openAiConfig?.orgId}]: ${
-          error.message
-        } - ${JSON.stringify(error.response?.data)}`
+        `Retry #${i} error: ${error.message}`,
+        error.response?.data || error.data || error
       );
 
       const errorCode = error.data?.code;
 
-      if (errorCode) {
-        console.error(
-          identifier,
-          `Retry #${i} failed with API error: ${errorCode}`,
-          JSON.stringify({
-            data: error.data,
-          })
-        );
-      }
-
       // Usually due to image content, we get a policy violation error
       if (errorCode === "content_policy_violation") {
-        console.log(
-          identifier,
-          `Removing images due to content policy violation error`
-        );
+        logger.log(identifier, "Removing images due to content policy violation error");
         openAiPayload.messages.forEach((message: OpenAIMessage) => {
           if (Array.isArray(message.content)) {
             message.content = message.content.filter(
@@ -169,20 +153,14 @@ async function callOpenAiWithRetries(
         openAiConfig?.service === "azure" &&
         errorCode === "content_filter"
       ) {
-        console.log(
-          identifier,
-          `Switching to OpenAI service due to content filter error`
-        );
+        logger.log(identifier, "Switching to OpenAI service due to content filter error");
         openAiConfig.service = "openai"; // Move to OpenAI, failed due to Azure content policy
       }
 
       // on 3rd retry
       if (i === 3) {
         if (openAiConfig?.service === "azure") {
-          console.log(
-            identifier,
-            `Switching to OpenAI service due to Azure service error`
-          );
+          logger.log(identifier, "Switching to OpenAI service due to Azure service error");
           openAiConfig.service = "openai";
         }
       }
@@ -191,10 +169,7 @@ async function callOpenAiWithRetries(
       if (i === 4) {
         // abort function calling, e.g. stubborn `python` function call case
         if (openAiPayload.tools) {
-          console.log(
-            identifier,
-            `Switching to no tool choice due to persistent error`
-          );
+          logger.log(identifier, "Switching to no tool choice due to persistent error");
           openAiPayload.tool_choice = "none";
         }
       }
@@ -203,7 +178,7 @@ async function callOpenAiWithRetries(
     }
   }
 
-  console.error(
+  logger.error(
     identifier,
     `Failed to call OpenAI API after ${retries} attempts. Please lookup OpenAI status for active issues.`,
     errorObj
@@ -234,7 +209,7 @@ async function callOpenAIStream(
   let response;
   const controller = new AbortController();
   if (openAiConfig.service === "azure") {
-    console.log(identifier, "Using Azure OpenAI service", openAiPayload.model);
+    logger.log(identifier, "Using Azure OpenAI service", openAiPayload.model);
     const model = openAiPayload.model;
 
     if (!openAiConfig.modelConfigMap) {
@@ -250,7 +225,7 @@ async function callOpenAIStream(
     } else {
       throw new Error("Azure OpenAI endpoint is required in modelConfigMap.");
     }
-    console.log(identifier, "Using endpoint", endpoint);
+    logger.log(identifier, "Using endpoint", endpoint);
 
     try {
       const stringifiedPayload = JSON.stringify({
@@ -259,11 +234,7 @@ async function callOpenAIStream(
       });
       const parsedPayload = JSON.parse(stringifiedPayload);
     } catch (error) {
-      console.error(
-        identifier,
-        "Stream error: Azure OpenAI JSON parsing error:",
-        JSON.stringify(error)
-      );
+      logger.error(identifier, "Stream error: Azure OpenAI JSON parsing error:", error);
     }
 
     response = await fetch(endpoint, {
@@ -280,10 +251,10 @@ async function callOpenAIStream(
     });
   } else {
     // openai by default
-    console.log(identifier, "Using OpenAI service", openAiPayload.model);
+    logger.log(identifier, "Using OpenAI service", openAiPayload.model);
     const endpoint = `https://api.openai.com/v1/chat/completions`;
     if (openAiConfig.orgId) {
-      console.log(identifier, "Using orgId", openAiConfig.orgId);
+      logger.log(identifier, "Using orgId", openAiConfig.orgId);
     }
 
     response = await fetch(endpoint, {
@@ -316,11 +287,7 @@ async function callOpenAIStream(
     const startAbortTimeout = () => {
       abortTimeout && clearTimeout(abortTimeout);
       return setTimeout(() => {
-        console.log(
-          identifier,
-          `Stream error: aborted due to timeout after ${chunkTimeoutMs} ms.`,
-          JSON.stringify({ paragraph })
-        );
+        logger.error(identifier, `Stream timeout after ${chunkTimeoutMs}ms`);
         controller.abort();
       }, chunkTimeoutMs);
     };
@@ -333,13 +300,7 @@ async function callOpenAIStream(
       clearTimeout(abortTimeout);
 
       if (done) {
-        console.log(
-          identifier,
-          `Stream error: ended after ${
-            chunkIndex + 1
-          } chunks via reader done flag.`,
-          rawStreamedBody
-        );
+        logger.error(identifier, `Stream ended prematurely after ${chunkIndex + 1} chunks`);
         throw new Error("Stream error: ended prematurely");
       }
 
@@ -357,10 +318,6 @@ async function callOpenAIStream(
         }
 
         if (jsonString.includes("[DONE]")) {
-          console.log(
-            identifier,
-            `Stream explicitly marked as done after ${chunkIndex + 1} chunks.`
-          );
           try {
             return parseStreamedResponse(
               identifier,
@@ -370,11 +327,7 @@ async function callOpenAIStream(
               functionNames
             );
           } catch (error) {
-            console.error(
-              identifier,
-              "Stream error: parsing response:",
-              rawStreamedBody
-            );
+            logger.error(identifier, "Stream error: parsing response");
             throw error;
           }
         }
@@ -389,22 +342,15 @@ async function callOpenAIStream(
 
         if (!json.choices || !json.choices.length) {
           if (json.error) {
-            console.error(
-              identifier,
-              "Stream error: OpenAI error:",
-              json.error && JSON.stringify(json.error)
-            );
+            logger.error(identifier, "Stream error: OpenAI error:", json.error);
             const error = new Error("Stream error: OpenAI error") as any;
             error.data = json.error;
             error.requestBody = truncatePayload(openAiPayload);
             throw error;
           }
-          if (chunkIndex !== 0)
-            console.error(
-              identifier,
-              "Stream error: no choices in JSON:",
-              json
-            ); // bad if it's not the first chunk
+          if (chunkIndex !== 0) {
+            logger.error(identifier, "Stream error: no choices in JSON:", json);
+          }
           continue;
         }
 
@@ -457,7 +403,7 @@ async function callOpenAI(
 
   let response;
   if (openAiConfig.service === "azure") {
-    console.log(identifier, "Using Azure OpenAI service", openAiPayload.model);
+    logger.log(identifier, "Using Azure OpenAI service", openAiPayload.model);
     const model = openAiPayload.model;
 
     if (!openAiConfig.modelConfigMap) {
@@ -473,7 +419,7 @@ async function callOpenAI(
     } else {
       throw new Error("Azure OpenAI endpoint is required in modelConfigMap.");
     }
-    console.log(identifier, "Using endpoint", endpoint);
+    logger.log(identifier, "Using endpoint", endpoint);
 
     try {
       const stringifiedPayload = JSON.stringify({
@@ -483,11 +429,7 @@ async function callOpenAI(
       const parsedPayload = JSON.parse(stringifiedPayload);
       // You can use parsedPayload if needed
     } catch (error) {
-      console.error(
-        identifier,
-        "OpenAI JSON parsing error:",
-        JSON.stringify(error)
-      );
+      logger.error(identifier, "OpenAI JSON parsing error:", error);
       throw error;
     }
 
@@ -504,10 +446,10 @@ async function callOpenAI(
     });
   } else {
     // openai by default
-    console.log(identifier, "Using OpenAI service", openAiPayload.model);
+    logger.log(identifier, "Using OpenAI service", openAiPayload.model);
     const endpoint = `https://api.openai.com/v1/chat/completions`;
     if (openAiConfig.orgId) {
-      console.log(identifier, "Using orgId", openAiConfig.orgId);
+      logger.log(identifier, "Using orgId", openAiConfig.orgId);
     }
 
     response = await fetch(endpoint, {
@@ -528,7 +470,7 @@ async function callOpenAI(
 
   if (!response.ok) {
     const errorData = await response.json();
-    console.error(identifier, "OpenAI API error:", JSON.stringify(errorData));
+    logger.error(identifier, "OpenAI API error:", errorData);
     throw new Error(`OpenAI API Error: ${errorData.error.message}`);
   }
 
@@ -536,7 +478,7 @@ async function callOpenAI(
 
   if (!data.choices || !data.choices.length) {
     if (data.error) {
-      console.error(identifier, "OpenAI error:", JSON.stringify(data.error));
+      logger.error(identifier, "OpenAI error:", data.error);
       throw new Error("OpenAI error: " + data.error.message);
     }
     throw new Error("OpenAI error: No choices returned.");
@@ -588,18 +530,17 @@ async function callAnthropicWithRetries(
   AiConfig?: AnthropicAIConfig,
   attempts = 5
 ): Promise<ParsedResponseMessage> {
-  console.log(identifier, "Calling Anthropic API with retries");
+  logger.log(identifier, "Calling Anthropic API with retries");
   let lastResponse;
   for (let i = 0; i < attempts; i++) {
     try {
       lastResponse = await callAnthropic(identifier, AiPayload, AiConfig);
       return lastResponse;
     } catch (e: any) {
-      console.error(e);
-      console.error(
+      logger.error(
         identifier,
-        `Retrying due to error: received bad response from Anthropic API: ${e.message}`,
-        JSON.stringify(e.response?.data)
+        `Retry #${i} error: ${e.message}`,
+        e.response?.data || e
       );
 
       if (e.response?.data?.error?.type === "rate_limit_error") {
@@ -689,7 +630,7 @@ async function callAnthropic(
   const answers = data.content;
 
   if (!answers[0]) {
-    console.error(identifier, "Missing answer in Anthropic API:", data);
+    logger.error(identifier, "Missing answer in Anthropic API:", data);
     throw new Error("Missing answer in Anthropic API");
   }
 
@@ -697,7 +638,7 @@ async function callAnthropic(
   let functionCalls: any[] = [];
   for (const answer of answers) {
     if (!answer.type) {
-      console.error(identifier, "Missing answer type in Anthropic API:", data);
+      logger.error(identifier, "Missing answer type in Anthropic API:", data);
       throw new Error("Missing answer type in Anthropic API");
     }
 
@@ -714,7 +655,7 @@ async function callAnthropic(
           /<thinking>|<\/thinking>|<answer>|<\/answer>/gs,
           ""
         );
-        console.log("No text in answer, returning text within tags:", text);
+        logger.log(identifier, "No text in answer, returning text within tags:", text);
       }
 
       if (textResponse) {
@@ -732,11 +673,7 @@ async function callAnthropic(
   }
 
   if (!textResponse && !functionCalls.length) {
-    console.error(
-      identifier,
-      "Missing text & fns in Anthropic API response:",
-      JSON.stringify(data)
-    );
+    logger.error(identifier, "Missing text & fns in Anthropic API response:", data);
     throw new Error("Missing text & fns in Anthropic API response");
   }
 
@@ -886,9 +823,7 @@ async function prepareGoogleAIPayload(
 
     for (const file of message.files || []) {
       if (!file.mimeType?.startsWith("image")) {
-        console.warn(
-          "Google AI API does not support non-image file types. Skipping file."
-        );
+        logger.warn("payload", "Google AI API does not support non-image file types. Skipping file.");
         continue;
       }
 
@@ -935,9 +870,8 @@ async function callGoogleAI(
   identifier: string,
   payload: GoogleAIPayload
 ): Promise<ParsedResponseMessage> {
-  console.log(identifier, "Calling Google AI API");
+  logger.log(identifier, "Calling Google AI API");
   const googleMessages = jigGoogleMessages(payload.messages);
-  console.log(identifier, "Google AI API messages:", googleMessages);
 
   const history = googleMessages.slice(0, -1);
   const lastMessage = googleMessages.slice(-1)[0];
@@ -992,11 +926,7 @@ async function callGoogleAI(
   }));
 
   if (!text && !parsedFunctionCalls?.length && !files.length) {
-    console.error(
-      identifier,
-      "Missing text & fns in Google AI API response:",
-      response
-    );
+    logger.error(identifier, "Missing text & fns in Google AI API response:", response);
     throw new Error("Missing text & fns in Google AI API response");
   }
 
@@ -1013,7 +943,7 @@ async function callGoogleAIWithRetries(
   payload: GoogleAIPayload,
   retries: number = 5
 ): Promise<ParsedResponseMessage> {
-  console.log(identifier, "Calling Google AI API with retries");
+  logger.log(identifier, "Calling Google AI API with retries");
 
   let lastError: any;
   for (let i = 0; i < retries; i++) {
@@ -1021,12 +951,7 @@ async function callGoogleAIWithRetries(
       return await callGoogleAI(identifier, payload);
     } catch (e: any) {
       lastError = e;
-      console.error(e);
-      console.error(
-        identifier,
-        `Retrying due to error: received bad response from Google AI API: ${e.message}`,
-        JSON.stringify(e) // Google AI errors might not have a response.data structure like others
-      );
+      logger.error(identifier, `Retry #${i} error: ${e.message}`, e);
 
       // Add any specific Google AI error handling or payload modifications here if needed
       // e.g., if (e.status === 429) { /* handle rate limit */ }
@@ -1050,8 +975,7 @@ export async function callWithRetries(
 ): Promise<ParsedResponseMessage> {
   // Determine which service to use based on the model type
   if (isAnthropicPayload(aiPayload)) {
-    console.log(identifier, "Delegating call to Anthropic API");
-
+    logger.log(identifier, "Delegating call to Anthropic API");
     return await callAnthropicWithRetries(
       identifier,
       await prepareAnthropicPayload(aiPayload),
@@ -1059,7 +983,7 @@ export async function callWithRetries(
       retries
     );
   } else if (isOpenAiPayload(aiPayload)) {
-    console.log(identifier, "Delegating call to OpenAI API");
+    logger.log(identifier, "Delegating call to OpenAI API");
     return await callOpenAiWithRetries(
       identifier,
       await prepareOpenAIPayload(aiPayload),
@@ -1068,13 +992,13 @@ export async function callWithRetries(
       chunkTimeoutMs
     );
   } else if (isGroqPayload(aiPayload)) {
-    console.log(identifier, "Delegating call to Groq API");
+    logger.log(identifier, "Delegating call to Groq API");
     return await callGroqWithRetries(
       identifier,
       await prepareGroqPayload(aiPayload)
     );
   } else if (isGoogleAIPayload(aiPayload)) {
-    console.log(identifier, "Delegating call to Google AI API");
+    logger.log(identifier, "Delegating call to Google AI API");
     return await callGoogleAIWithRetries(
       identifier,
       await prepareGoogleAIPayload(aiPayload),
@@ -1116,9 +1040,7 @@ async function prepareAnthropicPayload(
 
     for (const file of message.files || []) {
       if (!file.mimeType?.startsWith("image")) {
-        console.warn(
-          "Anthropic API does not support non-image file types. Skipping file."
-        );
+        logger.warn("payload", "Anthropic API does not support non-image file types. Skipping file.");
         continue;
       }
 
@@ -1241,10 +1163,7 @@ async function prepareOpenAIPayload(
         //     });
         //   }
       } else {
-        console.warn(
-          "Skipping file in message. File or image type not supported by OpenAI API:",
-          file.mimeType
-        );
+        logger.warn("payload", "Skipping file in message. File or image type not supported by OpenAI API:", file.mimeType);
       }
     }
 
@@ -1317,7 +1236,7 @@ async function callGroq(
 
   const answer = data.choices[0].message;
   if (!answer) {
-    console.error(identifier, "Missing answer in Groq API:", data);
+    logger.error(identifier, "Missing answer in Groq API:", data);
     throw new Error("Missing answer in Groq API");
   }
 
@@ -1344,7 +1263,7 @@ async function callGroqWithRetries(
   payload: GroqPayload,
   retries: number = 5
 ): Promise<ParsedResponseMessage> {
-  console.log(identifier, "Calling Groq API with retries");
+  logger.log(identifier, "Calling Groq API with retries");
 
   let lastResponse;
   for (let i = 0; i < retries; i++) {
@@ -1352,12 +1271,7 @@ async function callGroqWithRetries(
       lastResponse = await callGroq(identifier, payload);
       return lastResponse;
     } catch (e: any) {
-      console.error(e);
-      console.error(
-        identifier,
-        `Retrying due to error: received bad response from Groq API: ${e.message}`,
-        JSON.stringify(e.response?.data)
-      );
+      logger.error(identifier, `Retry #${i} error: ${e.message}`, e.response?.data || e);
 
       await timeout(125 * i);
     }
@@ -1373,7 +1287,6 @@ async function getNormalizedBase64PNG(
   url: string,
   mime: string
 ): Promise<string> {
-  console.log("Normalizing image", url);
   const response = await axios.get(url, { responseType: "arraybuffer" });
 
   let imageBuffer = Buffer.from(response.data);

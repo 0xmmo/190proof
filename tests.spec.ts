@@ -13,10 +13,10 @@ const modelConfigs = [
   // { provider: "Groq", model: GroqModel.DEEPSEEK_R1_DISTILL_LLAMA_70B },
   // { provider: "OpenAI", model: GPTModel.GPT5_MINI },
   // { provider: "Anthropic", model: ClaudeModel.OPUS_4_5 },
-  // {
-  //   provider: "Gemini",
-  //   model: GeminiModel.GEMINI_3_FLASH_PREVIEW,
-  // },
+  {
+    provider: "Gemini",
+    model: GeminiModel.GEMINI_3_FLASH_PREVIEW,
+  },
 ];
 
 describe.each(modelConfigs)("$provider Model", ({ provider, model }) => {
