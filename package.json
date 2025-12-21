@@ -1,6 +1,6 @@
 {
   "name": "190proof",
-  "version": "1.0.69",
+  "version": "1.0.70",
   "description": "",
   "main": "./dist/index.js",
   "module": "./dist/index.mjs",
