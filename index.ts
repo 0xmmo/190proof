@@ -67,7 +67,11 @@ function parseStreamedResponse(
         arguments: JSON.parse(functionCallArgs),
       };
     } catch (error) {
-      logger.error(identifier, "Error parsing functionCallArgs:", functionCallArgs);
+      logger.error(
+        identifier,
+        "Error parsing functionCallArgs:",
+        functionCallArgs
+      );
       throw error;
     }
   }
@@ -136,7 +140,10 @@ async function callOpenAiWithRetries(
 
       // Usually due to image content, we get a policy violation error
       if (errorCode === "content_policy_violation") {
-        logger.log(identifier, "Removing images due to content policy violation error");
+        logger.log(
+          identifier,
+          "Removing images due to content policy violation error"
+        );
         openAiPayload.messages.forEach((message: OpenAIMessage) => {
           if (Array.isArray(message.content)) {
             message.content = message.content.filter(
@@ -153,14 +160,20 @@ async function callOpenAiWithRetries(
         openAiConfig?.service === "azure" &&
         errorCode === "content_filter"
       ) {
-        logger.log(identifier, "Switching to OpenAI service due to content filter error");
+        logger.log(
+          identifier,
+          "Switching to OpenAI service due to content filter error"
+        );
         openAiConfig.service = "openai"; // Move to OpenAI, failed due to Azure content policy
       }
 
       // on 3rd retry
       if (i === 3) {
         if (openAiConfig?.service === "azure") {
-          logger.log(identifier, "Switching to OpenAI service due to Azure service error");
+          logger.log(
+            identifier,
+            "Switching to OpenAI service due to Azure service error"
+          );
           openAiConfig.service = "openai";
         }
       }
@@ -169,7 +182,10 @@ async function callOpenAiWithRetries(
       if (i === 4) {
         // abort function calling, e.g. stubborn `python` function call case
         if (openAiPayload.tools) {
-          logger.log(identifier, "Switching to no tool choice due to persistent error");
+          logger.log(
+            identifier,
+            "Switching to no tool choice due to persistent error"
+          );
           openAiPayload.tool_choice = "none";
         }
       }
@@ -234,7 +250,11 @@ async function callOpenAIStream(
       });
       const parsedPayload = JSON.parse(stringifiedPayload);
     } catch (error) {
-      logger.error(identifier, "Stream error: Azure OpenAI JSON parsing error:", error);
+      logger.error(
+        identifier,
+        "Stream error: Azure OpenAI JSON parsing error:",
+        error
+      );
     }
 
     response = await fetch(endpoint, {
@@ -300,7 +320,10 @@ async function callOpenAIStream(
       clearTimeout(abortTimeout);
 
       if (done) {
-        logger.error(identifier, `Stream ended prematurely after ${chunkIndex + 1} chunks`);
+        logger.error(
+          identifier,
+          `Stream ended prematurely after ${chunkIndex + 1} chunks`
+        );
         throw new Error("Stream error: ended prematurely");
       }
 
@@ -655,7 +678,11 @@ async function callAnthropic(
           /<thinking>|<\/thinking>|<answer>|<\/answer>/gs,
           ""
         );
-        logger.log(identifier, "No text in answer, returning text within tags:", text);
+        logger.log(
+          identifier,
+          "No text in answer, returning text within tags:",
+          text
+        );
       }
 
       if (textResponse) {
@@ -673,7 +700,11 @@ async function callAnthropic(
   }
 
   if (!textResponse && !functionCalls.length) {
-    logger.error(identifier, "Missing text & fns in Anthropic API response:", data);
+    logger.error(
+      identifier,
+      "Missing text & fns in Anthropic API response:",
+      data
+    );
     throw new Error("Missing text & fns in Anthropic API response");
   }
 
@@ -823,7 +854,10 @@ async function prepareGoogleAIPayload(
 
     for (const file of message.files || []) {
       if (!file.mimeType?.startsWith("image")) {
-        logger.warn("payload", "Google AI API does not support non-image file types. Skipping file.");
+        logger.warn(
+          "payload",
+          "Google AI API does not support non-image file types. Skipping file."
+        );
         continue;
       }
 
@@ -870,7 +904,6 @@ async function callGoogleAI(
   identifier: Identifier,
   payload: GoogleAIPayload
 ): Promise<ParsedResponseMessage> {
-  logger.log(identifier, "Calling Google AI API");
   const googleMessages = jigGoogleMessages(payload.messages);
 
   const history = googleMessages.slice(0, -1);
@@ -926,7 +959,11 @@ async function callGoogleAI(
   }));
 
   if (!text && !parsedFunctionCalls?.length && !files.length) {
-    logger.error(identifier, "Missing text & fns in Google AI API response:", response);
+    logger.error(
+      identifier,
+      "Missing text & fns in Google AI API response:",
+      response
+    );
     throw new Error("Missing text & fns in Google AI API response");
   }
 
@@ -976,7 +1013,6 @@ export async function callWithRetries(
   const id = identifier;
   // Determine which service to use based on the model type
   if (isAnthropicPayload(aiPayload)) {
-    logger.log(id, "Delegating call to Anthropic API");
     return await callAnthropicWithRetries(
       id,
       await prepareAnthropicPayload(aiPayload),
@@ -984,7 +1020,6 @@ export async function callWithRetries(
       retries
     );
   } else if (isOpenAiPayload(aiPayload)) {
-    logger.log(id, "Delegating call to OpenAI API");
     return await callOpenAiWithRetries(
       id,
       await prepareOpenAIPayload(aiPayload),
@@ -993,13 +1028,8 @@ export async function callWithRetries(
       chunkTimeoutMs
     );
   } else if (isGroqPayload(aiPayload)) {
-    logger.log(id, "Delegating call to Groq API");
-    return await callGroqWithRetries(
-      id,
-      await prepareGroqPayload(aiPayload)
-    );
+    return await callGroqWithRetries(id, await prepareGroqPayload(aiPayload));
   } else if (isGoogleAIPayload(aiPayload)) {
-    logger.log(id, "Delegating call to Google AI API");
     return await callGoogleAIWithRetries(
       id,
       await prepareGoogleAIPayload(aiPayload),
@@ -1041,7 +1071,10 @@ async function prepareAnthropicPayload(
 
     for (const file of message.files || []) {
       if (!file.mimeType?.startsWith("image")) {
-        logger.warn("payload", "Anthropic API does not support non-image file types. Skipping file.");
+        logger.warn(
+          "payload",
+          "Anthropic API does not support non-image file types. Skipping file."
+        );
         continue;
       }
 
@@ -1164,7 +1197,11 @@ async function prepareOpenAIPayload(
         //     });
         //   }
       } else {
-        logger.warn("payload", "Skipping file in message. File or image type not supported by OpenAI API:", file.mimeType);
+        logger.warn(
+          "payload",
+          "Skipping file in message. File or image type not supported by OpenAI API:",
+          file.mimeType
+        );
       }
     }
 
@@ -1272,7 +1309,11 @@ async function callGroqWithRetries(
       lastResponse = await callGroq(identifier, payload);
       return lastResponse;
     } catch (e: any) {
-      logger.error(identifier, `Retry #${i} error: ${e.message}`, e.response?.data || e);
+      logger.error(
+        identifier,
+        `Retry #${i} error: ${e.message}`,
+        e.response?.data || e
+      );
 
       await timeout(125 * i);
     }
