@@ -1,16 +1,17 @@
 # 190proof
 
-A unified interface for interacting with multiple AI providers including **OpenAI**, **Anthropic**, **Google**, and **Groq**. This package provides a consistent API for making requests to different LLM providers while handling retries, streaming, and multimodal inputs.
+A unified interface for interacting with multiple AI providers including **OpenAI**, **Anthropic**, **Google**, **Groq**, and **AWS Bedrock**. This package provides a consistent API for making requests to different LLM providers while handling retries, streaming, and multimodal inputs.
 
 ## Features
 
 Fully-local unified interface across multiple AI providers that includes:
 
-- 🖼️ Image format & size normalization
-- 🛠️ Consistent function calling
+- 🛠️ Consistent function/tool calling across all providers
 - 💬 Consistent message alternation & system instructions
+- 🖼️ Image format & size normalization
 - 🔄 Automatic retries with configurable attempts
 - 📡 Streaming by default
+- ☁️ Cloud service providers supported (Azure, AWS Bedrock)
 
 ## Installation
 
@@ -27,7 +28,7 @@ import { callWithRetries } from "190proof";
 import { GPTModel, GenericPayload } from "190proof/interfaces";
 
 const payload: GenericPayload = {
-  model: GPTModel.O1_MINI,
+  model: GPTModel.GPT4O_MINI,
   messages: [
     {
       role: "user",
@@ -40,11 +41,43 @@ const response = await callWithRetries("my-request-id", payload);
 console.log(response.content);
 ```
 
+### Using Different Providers
+
+```typescript
+import { callWithRetries } from "190proof";
+import {
+  ClaudeModel,
+  GeminiModel,
+  GroqModel,
+  GenericPayload,
+} from "190proof/interfaces";
+
+// Anthropic
+const claudePayload: GenericPayload = {
+  model: ClaudeModel.SONNET_4,
+  messages: [{ role: "user", content: "Hello!" }],
+};
+
+// Google
+const geminiPayload: GenericPayload = {
+  model: GeminiModel.GEMINI_2_0_FLASH,
+  messages: [{ role: "user", content: "Hello!" }],
+};
+
+// Groq
+const groqPayload: GenericPayload = {
+  model: GroqModel.LLAMA_3_70B_8192,
+  messages: [{ role: "user", content: "Hello!" }],
+};
+
+const response = await callWithRetries("request-id", claudePayload);
+```
+
 ### With Function Calling
 
 ```typescript
 const payload: GenericPayload = {
-  model: GPTModel.O1_MINI,
+  model: GPTModel.GPT4O,
   messages: [
     {
       role: "user",
@@ -70,13 +103,14 @@ const payload: GenericPayload = {
 };
 
 const response = await callWithRetries("function-call-example", payload);
+// response.function_call contains { name: string, arguments: Record<string, any> }
 ```
 
 ### With Images
 
 ```typescript
 const payload: GenericPayload = {
-  model: GPTModel.O1_MINI,
+  model: ClaudeModel.SONNET_4,
   messages: [
     {
       role: "user",
@@ -98,7 +132,7 @@ const response = await callWithRetries("image-example", payload);
 
 ```typescript
 const payload: GenericPayload = {
-  model: GPTModel.O1_MINI,
+  model: GeminiModel.GEMINI_2_0_FLASH,
   messages: [
     {
       role: "system",
@@ -128,35 +162,122 @@ const response = await callWithRetries("system-message-example", payload);
 - `gpt-4o-mini`
 - `o1-preview`
 - `o1-mini`
+- `o3-mini`
+- `gpt-4.1`
+- `gpt-4.1-mini`
+- `gpt-4.1-nano`
+- `gpt-5`
+- `gpt-5-mini`
 
 ### Anthropic Models
 
 - `claude-3-haiku-20240307`
 - `claude-3-sonnet-20240229`
 - `claude-3-opus-20240229`
+- `claude-3-5-haiku-20241022`
 - `claude-3-5-sonnet-20241022`
+- `claude-sonnet-4-20250514`
+- `claude-opus-4-20250514`
+- `claude-opus-4-1`
+- `claude-haiku-4-5`
+- `claude-sonnet-4-5`
+- `claude-opus-4-5`
 
 ### Google Models
 
 - `gemini-1.5-pro-latest`
+- `gemini-exp-1206`
+- `gemini-2.0-flash`
+- `gemini-2.0-flash-exp-image-generation`
+- `gemini-2.0-flash-thinking-exp`
+- `gemini-2.0-flash-thinking-exp-01-21`
+- `gemini-2.5-flash-preview-04-17`
+- `gemini-3-flash-preview`
 
 ### Groq Models
 
 - `llama3-70b-8192`
+- `deepseek-r1-distill-llama-70b`
+
+## Environment Variables
+
+Set the following environment variables for the providers you want to use:
+
+```bash
+# OpenAI
+OPENAI_API_KEY=your-openai-api-key
+
+# Anthropic
+ANTHROPIC_API_KEY=your-anthropic-api-key
+
+# Google
+GEMINI_API_KEY=your-gemini-api-key
+
+# Groq
+GROQ_API_KEY=your-groq-api-key
+
+# AWS Bedrock (for Anthropic via Bedrock)
+AWS_ACCESS_KEY_ID=your-aws-access-key
+AWS_SECRET_ACCESS_KEY=your-aws-secret-key
+```
 
 ## API Reference
 
-### `callWithRetries(identifier: string, payload: GenericPayload, config?: Config, retries?: number, chunkTimeoutMs?: number)`
+### `callWithRetries(identifier, payload, config?, retries?, chunkTimeoutMs?)`
 
 Main function to make requests to any supported AI provider.
 
 #### Parameters
 
-- `identifier`: Unique identifier for the request
-- `payload`: Request payload containing model, messages, and optional functions
-- `config`: Optional configuration for the specific provider
-- `retries`: Number of retry attempts (default: 5)
-- `chunkTimeoutMs`: Timeout for streaming chunks (default: 15000)
+- `identifier`: `string | string[]` - Unique identifier for the request (used for logging)
+- `payload`: `GenericPayload` - Request payload containing model, messages, and optional functions
+- `config`: `OpenAIConfig | AnthropicAIConfig` - Optional configuration for the specific provider
+- `retries`: `number` - Number of retry attempts (default: 5)
+- `chunkTimeoutMs`: `number` - Timeout for streaming chunks in ms (default: 15000)
+
+#### Returns
+
+`Promise<ParsedResponseMessage>`:
+
+```typescript
+interface ParsedResponseMessage {
+  role: "assistant";
+  content: string | null;
+  function_call: FunctionCall | null;
+  files: File[]; // For models that return files (e.g., image generation)
+}
+```
+
+### Configuration Options
+
+#### OpenAI Config
+
+```typescript
+interface OpenAIConfig {
+  service: "azure" | "openai";
+  apiKey: string;
+  baseUrl: string;
+  orgId?: string;
+  modelConfigMap?: Record<
+    GPTModel,
+    {
+      resource: string;
+      deployment: string;
+      apiVersion: string;
+      apiKey: string;
+      endpoint?: string;
+    }
+  >;
+}
+```
+
+#### Anthropic Config
+
+```typescript
+interface AnthropicAIConfig {
+  service: "anthropic" | "bedrock";
+}
+```
 
 ## License
 

@@ -2,9 +2,12 @@ export enum ClaudeModel {
   HAIKU_3 = "claude-3-haiku-20240307",
   SONNET_3 = "claude-3-sonnet-20240229",
   OPUS_3 = "claude-3-opus-20240229",
+  HAIKU_3_5 = "claude-3-5-haiku-20241022",
   SONNET_3_5 = "claude-3-5-sonnet-20241022",
   SONNET_4 = "claude-sonnet-4-20250514",
   OPUS_4 = "claude-opus-4-20250514",
+  OPUS_4_1 = "claude-opus-4-1",
+  HAIKU_4_5 = "claude-haiku-4-5",
   SONNET_4_5 = "claude-sonnet-4-5",
   OPUS_4_5 = "claude-opus-4-5",
 }
