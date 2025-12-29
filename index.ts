@@ -959,12 +959,49 @@ async function callGoogleAI(
   }));
 
   if (!text && !parsedFunctionCalls?.length && !files.length) {
+    const candidate = response.candidates?.[0];
+    const finishReason = candidate?.finishReason;
+    const safetyRatings = candidate?.safetyRatings;
+    const usageMetadata = response.usageMetadata;
+    const modelVersion = response.modelVersion;
+
     logger.error(
       identifier,
       "Missing text & fns in Google AI API response:",
-      response
+      {
+        finishReason,
+        safetyRatings,
+        usageMetadata,
+        modelVersion,
+        candidateContent: candidate?.content,
+        promptFeedback: response.promptFeedback,
+        fullResponse: JSON.stringify(response),
+      }
     );
-    throw new Error("Missing text & fns in Google AI API response");
+
+    // Create a more descriptive error message based on the finish reason
+    let errorMessage = "Missing text & fns in Google AI API response";
+    if (finishReason) {
+      errorMessage += `: finishReason=${finishReason}`;
+      if (finishReason === "MALFORMED_FUNCTION_CALL") {
+        errorMessage += " (Google could not generate valid function call arguments)";
+      } else if (finishReason === "SAFETY") {
+        errorMessage += " (blocked by safety filters)";
+      } else if (finishReason === "RECITATION") {
+        errorMessage += " (blocked due to recitation)";
+      } else if (finishReason === "MAX_TOKENS") {
+        errorMessage += " (response truncated due to max tokens)";
+      }
+    }
+
+    const error = new Error(errorMessage) as any;
+    error.finishReason = finishReason;
+    error.safetyRatings = safetyRatings;
+    error.usageMetadata = usageMetadata;
+    error.modelVersion = modelVersion;
+    error.candidateContent = candidate?.content;
+    error.promptFeedback = response.promptFeedback;
+    throw error;
   }
 
   return {
@@ -988,10 +1025,54 @@ async function callGoogleAIWithRetries(
       return await callGoogleAI(identifier, payload);
     } catch (e: any) {
       lastError = e;
-      logger.error(identifier, `Retry #${i} error: ${e.message}`, e);
 
-      // Add any specific Google AI error handling or payload modifications here if needed
-      // e.g., if (e.status === 429) { /* handle rate limit */ }
+      // Log structured error details from Google AI
+      const errorDetails: Record<string, any> = {
+        message: e.message,
+        finishReason: e.finishReason,
+        modelVersion: e.modelVersion,
+      };
+
+      // Include safety ratings if present
+      if (e.safetyRatings) {
+        errorDetails.safetyRatings = e.safetyRatings;
+      }
+
+      // Include usage metadata if present
+      if (e.usageMetadata) {
+        errorDetails.usageMetadata = e.usageMetadata;
+      }
+
+      // Include prompt feedback if present (useful for blocked prompts)
+      if (e.promptFeedback) {
+        errorDetails.promptFeedback = e.promptFeedback;
+      }
+
+      // Include HTTP error details if present (from SDK errors)
+      if (e.status || e.statusText) {
+        errorDetails.httpStatus = e.status;
+        errorDetails.httpStatusText = e.statusText;
+      }
+
+      // Include error code/details from Google API errors
+      if (e.code) {
+        errorDetails.errorCode = e.code;
+      }
+      if (e.details) {
+        errorDetails.errorDetails = e.details;
+      }
+
+      logger.error(identifier, `Retry #${i} error: ${e.message}`, errorDetails);
+
+      // Handle specific Google AI errors
+      if (e.finishReason === "MALFORMED_FUNCTION_CALL" && i >= 3) {
+        // On 4th retry, try removing tools to get a text response instead
+        logger.log(
+          identifier,
+          "Removing tools due to persistent MALFORMED_FUNCTION_CALL errors"
+        );
+        payload.tools = undefined;
+      }
 
       await timeout(125 * i); // Exponential backoff
     }
@@ -1000,6 +1081,9 @@ async function callGoogleAIWithRetries(
     `Failed to call Google AI API after ${retries} attempts`
   ) as any;
   error.cause = lastError; // Attach the last caught error
+  error.finishReason = lastError?.finishReason;
+  error.usageMetadata = lastError?.usageMetadata;
+  error.safetyRatings = lastError?.safetyRatings;
   throw error;
 }
 
