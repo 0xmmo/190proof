@@ -29,7 +29,6 @@ import {
 import axios from "axios";
 import { isHeicImage, timeout } from "./utils";
 import { GoogleGenAI } from "@google/genai";
-const { GoogleGenerativeAI } = require("@google/generative-ai");
 
 const sharp = require("sharp");
 const decode = require("heic-decode");
@@ -45,6 +44,55 @@ export {
   GenericPayload,
 } from "./interfaces";
 
+// ─────────────────────────────────────────────────────────────────────────────
+// SHARED UTILITIES
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Generic retry wrapper for API calls with exponential backoff.
+ */
+async function withRetries<T>(
+  identifier: Identifier,
+  apiName: string,
+  fn: () => Promise<T>,
+  options: {
+    retries?: number;
+    baseDelayMs?: number;
+    onError?: (error: any, attempt: number) => void;
+  } = {}
+): Promise<T> {
+  const { retries = 5, baseDelayMs = 125, onError } = options;
+
+  logger.log(identifier, `Calling ${apiName} API with retries`);
+
+  let lastError: any;
+  for (let attempt = 0; attempt < retries; attempt++) {
+    try {
+      return await fn();
+    } catch (error: any) {
+      lastError = error;
+
+      if (onError) {
+        onError(error, attempt);
+      } else {
+        logger.error(
+          identifier,
+          `Retry #${attempt} error: ${error.message}`,
+          error.response?.data || error
+        );
+      }
+
+      await timeout(baseDelayMs * attempt);
+    }
+  }
+
+  const error = new Error(
+    `Failed to call ${apiName} API after ${retries} attempts`
+  ) as any;
+  error.cause = lastError;
+  throw error;
+}
+
 function parseStreamedResponse(
   identifier: Identifier,
   paragraph: string,
@@ -53,11 +101,11 @@ function parseStreamedResponse(
   allowedFunctionNames: Set<string> | null
 ): ParsedResponseMessage {
   let functionCall: ParsedResponseMessage["function_call"] = null;
+
   if (functionCallName && functionCallArgs) {
     if (allowedFunctionNames && !allowedFunctionNames.has(functionCallName)) {
       throw new Error(
-        "Stream error: received function call with unknown name: " +
-          functionCallName
+        `Stream error: received function call with unknown name: ${functionCallName}`
       );
     }
 
@@ -69,7 +117,7 @@ function parseStreamedResponse(
     } catch (error) {
       logger.error(
         identifier,
-        "Error parsing functionCallArgs:",
+        "Error parsing function call arguments:",
         functionCallArgs
       );
       throw error;
@@ -79,7 +127,7 @@ function parseStreamedResponse(
   if (!paragraph && !functionCall) {
     logger.error(
       identifier,
-      "Stream error: received message without content or function_call, raw:",
+      "Stream error: received message without content or function_call:",
       JSON.stringify({ paragraph, functionCallName, functionCallArgs })
     );
     throw new Error(
@@ -95,117 +143,194 @@ function parseStreamedResponse(
   };
 }
 
-async function callOpenAiWithRetries(
-  identifier: Identifier,
-  openAiPayload: OpenAIPayload,
-  openAiConfig?: OpenAIConfig,
-  retries: number = 5,
-  chunkTimeoutMs: number = 15_000
-): Promise<ParsedResponseMessage> {
-  logger.log(
-    identifier,
-    "Calling OpenAI API with retries:",
-    openAiConfig?.service,
-    openAiPayload.model
-  );
-
-  let errorObj: any;
-  for (let i = 0; i <= retries; i++) {
-    try {
-      const timerId = `timer:${identifier}:${Date.now()}:callOpenAi:${
-        openAiConfig?.service
-      }-${openAiPayload.model}-${openAiConfig?.orgId}`;
-
-      if (
-        openAiPayload.model === GPTModel.O1_MINI ||
-        openAiPayload.model === GPTModel.O1_PREVIEW
-      ) {
-        return await callOpenAI(identifier, openAiPayload, openAiConfig);
-      } else {
-        return await callOpenAIStream(
-          identifier,
-          openAiPayload,
-          openAiConfig,
-          chunkTimeoutMs
-        );
-      }
-    } catch (error: any) {
-      logger.error(
-        identifier,
-        `Retry #${i} error: ${error.message}`,
-        error.response?.data || error.data || error
-      );
-
-      const errorCode = error.data?.code;
-
-      // Usually due to image content, we get a policy violation error
-      if (errorCode === "content_policy_violation") {
-        logger.log(
-          identifier,
-          "Removing images due to content policy violation error"
-        );
-        openAiPayload.messages.forEach((message: OpenAIMessage) => {
-          if (Array.isArray(message.content)) {
-            message.content = message.content.filter(
-              (content) => content.type === "text"
-            );
-          }
-        });
-      }
-
-      // on 2nd or more retries
-      // if Azure content policy error is persistent
-      if (
-        i >= 2 &&
-        openAiConfig?.service === "azure" &&
-        errorCode === "content_filter"
-      ) {
-        logger.log(
-          identifier,
-          "Switching to OpenAI service due to content filter error"
-        );
-        openAiConfig.service = "openai"; // Move to OpenAI, failed due to Azure content policy
-      }
-
-      // on 3rd retry
-      if (i === 3) {
-        if (openAiConfig?.service === "azure") {
-          logger.log(
-            identifier,
-            "Switching to OpenAI service due to Azure service error"
-          );
-          openAiConfig.service = "openai";
+function truncatePayload(payload: OpenAIPayload): string {
+  return JSON.stringify(
+    {
+      ...payload,
+      messages: payload.messages.map((message) => {
+        const truncatedMessage = { ...message };
+        if (typeof truncatedMessage.content === "string") {
+          truncatedMessage.content = truncatedMessage.content.slice(0, 100);
+        } else if (Array.isArray(truncatedMessage.content)) {
+          truncatedMessage.content = truncatedMessage.content.map((block) => {
+            if (block.type === "image_url") {
+              return {
+                ...block,
+                image_url: { url: block.image_url.url.slice(0, 100) },
+              };
+            }
+            return block;
+          });
         }
-      }
-
-      // on 4th retry
-      if (i === 4) {
-        // abort function calling, e.g. stubborn `python` function call case
-        if (openAiPayload.tools) {
-          logger.log(
-            identifier,
-            "Switching to no tool choice due to persistent error"
-          );
-          openAiPayload.tool_choice = "none";
-        }
-      }
-
-      await timeout(250);
-    }
-  }
-
-  logger.error(
-    identifier,
-    `Failed to call OpenAI API after ${retries} attempts. Please lookup OpenAI status for active issues.`,
-    errorObj
-  );
-  throw new Error(
-    `${identifier}: Failed to call OpenAI API after ${retries} attempts. Please lookup OpenAI status for active issues.`
+        return truncatedMessage;
+      }),
+    },
+    null,
+    2
   );
 }
 
-async function callOpenAIStream(
+async function getNormalizedBase64PNG(
+  url: string,
+  mime: string
+): Promise<string> {
+  const response = await axios.get(url, { responseType: "arraybuffer" });
+
+  let imageBuffer = Buffer.from(response.data);
+  let sharpOptions = {};
+
+  if (isHeicImage(url, mime)) {
+    const imageData = await decode({ buffer: imageBuffer });
+    imageBuffer = Buffer.from(imageData.data);
+    sharpOptions = {
+      raw: {
+        width: imageData.width,
+        height: imageData.height,
+        channels: 4,
+      },
+    };
+  }
+
+  // Limits size of image to < 5MB Anthropic limit
+  const resizedBuffer = await sharp(imageBuffer, sharpOptions)
+    .withMetadata()
+    .resize(1024, 1024, { fit: "inside", withoutEnlargement: true })
+    .png()
+    .toBuffer();
+
+  return resizedBuffer.toString("base64");
+}
+
+const ALLOWED_IMAGE_MIME_TYPES = [
+  "image/png",
+  "image/jpeg",
+  "image/gif",
+  "image/webp",
+];
+
+// ─────────────────────────────────────────────────────────────────────────────
+// OPENAI
+// ─────────────────────────────────────────────────────────────────────────────
+
+interface OpenAIRequestConfig {
+  endpoint: string;
+  headers: Record<string, string>;
+}
+
+function buildOpenAIRequestConfig(
   identifier: Identifier,
+  model: string,
+  config: OpenAIConfig | undefined
+): OpenAIRequestConfig {
+  if (!config) {
+    config = {
+      service: "openai",
+      apiKey: process.env.OPENAI_API_KEY as string,
+      baseUrl: "",
+    };
+  }
+
+  if (config.service === "azure") {
+    logger.log(identifier, "Using Azure OpenAI service:", model);
+
+    if (!config.modelConfigMap) {
+      throw new Error(
+        "OpenAI config modelConfigMap is required when using Azure OpenAI service."
+      );
+    }
+
+    const azureConfig = config.modelConfigMap[model as GPTModel];
+    if (!azureConfig?.endpoint) {
+      throw new Error("Azure OpenAI endpoint is required in modelConfigMap.");
+    }
+
+    const endpoint = `${azureConfig.endpoint}/openai/deployments/${azureConfig.deployment}/chat/completions?api-version=${azureConfig.apiVersion}`;
+    logger.log(identifier, "Using endpoint:", endpoint);
+
+    return {
+      endpoint,
+      headers: {
+        "Content-Type": "application/json",
+        "api-key": azureConfig.apiKey,
+      },
+    };
+  }
+
+  // Default: OpenAI
+  logger.log(identifier, "Using OpenAI service:", model);
+  if (config.orgId) {
+    logger.log(identifier, "Using orgId:", config.orgId);
+  }
+
+  return {
+    endpoint: "https://api.openai.com/v1/chat/completions",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${config.apiKey}`,
+      ...(config.orgId ? { "OpenAI-Organization": config.orgId } : {}),
+    },
+  };
+}
+
+async function prepareOpenAIPayload(
+  identifier: Identifier,
+  payload: GenericPayload
+): Promise<OpenAIPayload> {
+  const preparedPayload: OpenAIPayload = {
+    model: payload.model as GPTModel,
+    messages: [],
+    tools: payload.functions?.map((fn) => ({
+      type: "function",
+      function: fn,
+    })),
+    tool_choice: payload.function_call
+      ? typeof payload.function_call === "string"
+        ? payload.function_call
+        : { type: "function", function: payload.function_call }
+      : undefined,
+  };
+
+  for (const message of payload.messages) {
+    const contentBlocks: OpenAIContentBlock[] = [];
+
+    if (message.content) {
+      contentBlocks.push({ type: "text", text: message.content });
+    }
+
+    for (const file of message.files || []) {
+      if (ALLOWED_IMAGE_MIME_TYPES.includes(file.mimeType)) {
+        if (file.url) {
+          contentBlocks.push({
+            type: "image_url",
+            image_url: { url: file.url },
+          });
+          contentBlocks.push({ type: "text", text: `Image (${file.url})` });
+        } else if (file.data) {
+          contentBlocks.push({
+            type: "image_url",
+            image_url: { url: `data:${file.mimeType};base64,${file.data}` },
+          });
+        }
+      } else if (file.url) {
+        // Non-image file with URL - add text reference
+        contentBlocks.push({
+          type: "text",
+          text: `File (${file.url})`,
+        });
+      }
+    }
+
+    preparedPayload.messages.push({
+      role: message.role,
+      content: contentBlocks,
+    });
+  }
+
+  return preparedPayload;
+}
+
+async function callOpenAIStream(
+  id: Identifier,
   openAiPayload: OpenAIPayload,
   openAiConfig: OpenAIConfig | undefined,
   chunkTimeoutMs: number
@@ -214,295 +339,133 @@ async function callOpenAIStream(
     ? new Set(openAiPayload.tools.map((fn) => fn.function.name as string))
     : null;
 
-  if (!openAiConfig) {
-    openAiConfig = {
-      service: "openai",
-      apiKey: process.env.OPENAI_API_KEY as string,
-      baseUrl: "",
-    };
-  }
+  const { endpoint, headers } = buildOpenAIRequestConfig(
+    id,
+    openAiPayload.model,
+    openAiConfig
+  );
 
-  let response;
   const controller = new AbortController();
-  if (openAiConfig.service === "azure") {
-    logger.log(identifier, "Using Azure OpenAI service", openAiPayload.model);
-    const model = openAiPayload.model;
+  const response = await fetch(endpoint, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ ...openAiPayload, stream: true }),
+    signal: controller.signal,
+  });
 
-    if (!openAiConfig.modelConfigMap) {
-      throw new Error(
-        "OpenAI config modelConfigMap is required when using Azure OpenAI service."
-      );
-    }
-
-    const azureConfig = openAiConfig.modelConfigMap[model];
-    let endpoint;
-    if (azureConfig.endpoint) {
-      endpoint = `${azureConfig.endpoint}/openai/deployments/${azureConfig.deployment}/chat/completions?api-version=${azureConfig.apiVersion}`;
-    } else {
-      throw new Error("Azure OpenAI endpoint is required in modelConfigMap.");
-    }
-    logger.log(identifier, "Using endpoint", endpoint);
-
-    try {
-      const stringifiedPayload = JSON.stringify({
-        ...openAiPayload,
-        stream: true,
-      });
-      const parsedPayload = JSON.parse(stringifiedPayload);
-    } catch (error) {
-      logger.error(
-        identifier,
-        "Stream error: Azure OpenAI JSON parsing error:",
-        error
-      );
-    }
-
-    response = await fetch(endpoint, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "api-key": azureConfig.apiKey,
-      },
-      body: JSON.stringify({
-        ...openAiPayload,
-        stream: true,
-      }),
-      signal: controller.signal,
-    });
-  } else {
-    // openai by default
-    logger.log(identifier, "Using OpenAI service", openAiPayload.model);
-    const endpoint = `https://api.openai.com/v1/chat/completions`;
-    if (openAiConfig.orgId) {
-      logger.log(identifier, "Using orgId", openAiConfig.orgId);
-    }
-
-    response = await fetch(endpoint, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${openAiConfig.apiKey}`,
-        ...(openAiConfig.orgId
-          ? { "OpenAI-Organization": openAiConfig.orgId }
-          : {}),
-      },
-      body: JSON.stringify({
-        ...openAiPayload,
-        stream: true,
-      }),
-      signal: controller.signal,
-    });
+  if (!response.body) {
+    throw new Error("Stream error: no response body");
   }
 
-  if (response.body) {
-    let rawStreamedBody = "";
-    let paragraph = "";
-    let functionCallName = "";
-    let functionCallArgs = "";
+  let paragraph = "";
+  let functionCallName = "";
+  let functionCallArgs = "";
 
-    const reader = response.body.getReader();
+  const reader = response.body.getReader();
+  let partialChunk = "";
+  let chunkIndex = -1;
 
-    let partialChunk = "";
-    let abortTimeout: NodeJS.Timeout | null = null;
-    const startAbortTimeout = () => {
-      abortTimeout && clearTimeout(abortTimeout);
-      return setTimeout(() => {
-        logger.error(identifier, `Stream timeout after ${chunkTimeoutMs}ms`);
-        controller.abort();
-      }, chunkTimeoutMs);
-    };
+  const createAbortTimeout = () =>
+    setTimeout(() => {
+      logger.error(id, `Stream timeout after ${chunkTimeoutMs}ms`);
+      controller.abort();
+    }, chunkTimeoutMs);
 
-    let chunkIndex = -1;
-    while (true) {
-      chunkIndex++;
-      const abortTimeout = startAbortTimeout();
-      const { done, value } = await reader.read();
-      clearTimeout(abortTimeout);
+  while (true) {
+    chunkIndex++;
+    const abortTimeout = createAbortTimeout();
+    const { done, value } = await reader.read();
+    clearTimeout(abortTimeout);
 
-      if (done) {
-        logger.error(
-          identifier,
-          `Stream ended prematurely after ${chunkIndex + 1} chunks`
-        );
-        throw new Error("Stream error: ended prematurely");
-      }
-
-      let chunk = new TextDecoder().decode(value);
-      rawStreamedBody += chunk + "\n";
-      if (partialChunk) {
-        chunk = partialChunk + chunk;
-        partialChunk = "";
-      }
-      let jsonStrings = chunk.split(/^data: /gm);
-
-      for (let jsonString of jsonStrings) {
-        if (!jsonString) {
-          continue;
-        }
-
-        if (jsonString.includes("[DONE]")) {
-          try {
-            return parseStreamedResponse(
-              identifier,
-              paragraph,
-              functionCallName,
-              functionCallArgs,
-              functionNames
-            );
-          } catch (error) {
-            logger.error(identifier, "Stream error: parsing response");
-            throw error;
-          }
-        }
-
-        let json;
-        try {
-          json = JSON.parse(jsonString.trim());
-        } catch (error: any) {
-          partialChunk = jsonString; // We're assuming any JSON parsing error means we got a non-terminated JSON for a chunk
-          continue;
-        }
-
-        if (!json.choices || !json.choices.length) {
-          if (json.error) {
-            logger.error(identifier, "Stream error: OpenAI error:", json.error);
-            const error = new Error("Stream error: OpenAI error") as any;
-            error.data = json.error;
-            error.requestBody = truncatePayload(openAiPayload);
-            throw error;
-          }
-          if (chunkIndex !== 0) {
-            logger.error(identifier, "Stream error: no choices in JSON:", json);
-          }
-          continue;
-        }
-
-        const dToolCall:
-          | {
-              index?: number;
-              function?: {
-                name?: string;
-                arguments?: string;
-              };
-            }
-          | undefined = json.choices?.[0]?.delta?.tool_calls?.[0];
-        if (dToolCall) {
-          const toolCallIndex = dToolCall.index || 0;
-          // TODO: handle multiple function calls in response
-          if (toolCallIndex === 0) {
-            const dFn = dToolCall.function || {};
-            if (dFn.name) functionCallName += dFn.name;
-            if (dFn.arguments) functionCallArgs += dFn.arguments;
-          }
-        }
-
-        const text = json.choices?.[0]?.delta?.content;
-        if (text) {
-          paragraph += text;
-        }
-      }
+    if (done) {
+      logger.error(id, `Stream ended prematurely after ${chunkIndex + 1} chunks`);
+      throw new Error("Stream error: ended prematurely");
     }
-  } else {
-    throw new Error("Stream error: no response body");
+
+    let chunk = new TextDecoder().decode(value);
+    if (partialChunk) {
+      chunk = partialChunk + chunk;
+      partialChunk = "";
+    }
+
+    const jsonStrings = chunk.split(/^data: /gm);
+
+    for (const jsonString of jsonStrings) {
+      if (!jsonString) continue;
+
+      if (jsonString.includes("[DONE]")) {
+        return parseStreamedResponse(
+          id,
+          paragraph,
+          functionCallName,
+          functionCallArgs,
+          functionNames
+        );
+      }
+
+      let json;
+      try {
+        json = JSON.parse(jsonString.trim());
+      } catch {
+        partialChunk = jsonString;
+        continue;
+      }
+
+      if (!json.choices?.length) {
+        if (json.error) {
+          logger.error(id, "Stream error from OpenAI:", json.error);
+          const error = new Error("Stream error: OpenAI error") as any;
+          error.data = json.error;
+          error.requestBody = truncatePayload(openAiPayload);
+          throw error;
+        }
+        if (chunkIndex !== 0) {
+          logger.error(id, "Stream error: no choices in JSON:", json);
+        }
+        continue;
+      }
+
+      const toolCall = json.choices[0]?.delta?.tool_calls?.[0];
+      if (toolCall?.index === 0 || toolCall?.index === undefined) {
+        if (toolCall?.function?.name) functionCallName += toolCall.function.name;
+        if (toolCall?.function?.arguments) functionCallArgs += toolCall.function.arguments;
+      }
+
+      const text = json.choices[0]?.delta?.content;
+      if (text) paragraph += text;
+    }
   }
 }
 
 async function callOpenAI(
-  identifier: Identifier,
+  id: Identifier,
   openAiPayload: OpenAIPayload,
   openAiConfig: OpenAIConfig | undefined
 ): Promise<ParsedResponseMessage> {
-  const functionNames: Set<string> | null = openAiPayload.tools
-    ? new Set(openAiPayload.tools.map((fn) => fn.function.name as string))
-    : null;
+  const { endpoint, headers } = buildOpenAIRequestConfig(
+    id,
+    openAiPayload.model,
+    openAiConfig
+  );
 
-  if (!openAiConfig) {
-    openAiConfig = {
-      service: "openai",
-      apiKey: process.env.OPENAI_API_KEY as string,
-      baseUrl: "",
-    };
-  }
-
-  let response;
-  if (openAiConfig.service === "azure") {
-    logger.log(identifier, "Using Azure OpenAI service", openAiPayload.model);
-    const model = openAiPayload.model;
-
-    if (!openAiConfig.modelConfigMap) {
-      throw new Error(
-        "OpenAI config modelConfigMap is required when using Azure OpenAI service."
-      );
-    }
-
-    const azureConfig = openAiConfig.modelConfigMap[model];
-    let endpoint;
-    if (azureConfig.endpoint) {
-      endpoint = `${azureConfig.endpoint}/openai/deployments/${azureConfig.deployment}/chat/completions?api-version=${azureConfig.apiVersion}`;
-    } else {
-      throw new Error("Azure OpenAI endpoint is required in modelConfigMap.");
-    }
-    logger.log(identifier, "Using endpoint", endpoint);
-
-    try {
-      const stringifiedPayload = JSON.stringify({
-        ...openAiPayload,
-        stream: false,
-      });
-      const parsedPayload = JSON.parse(stringifiedPayload);
-      // You can use parsedPayload if needed
-    } catch (error) {
-      logger.error(identifier, "OpenAI JSON parsing error:", error);
-      throw error;
-    }
-
-    response = await fetch(endpoint, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "api-key": azureConfig.apiKey,
-      },
-      body: JSON.stringify({
-        ...openAiPayload,
-        stream: false,
-      }),
-    });
-  } else {
-    // openai by default
-    logger.log(identifier, "Using OpenAI service", openAiPayload.model);
-    const endpoint = `https://api.openai.com/v1/chat/completions`;
-    if (openAiConfig.orgId) {
-      logger.log(identifier, "Using orgId", openAiConfig.orgId);
-    }
-
-    response = await fetch(endpoint, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${openAiConfig.apiKey}`,
-        ...(openAiConfig.orgId
-          ? { "OpenAI-Organization": openAiConfig.orgId }
-          : {}),
-      },
-      body: JSON.stringify({
-        ...openAiPayload,
-        stream: false,
-      }),
-    });
-  }
+  const response = await fetch(endpoint, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ ...openAiPayload, stream: false }),
+  });
 
   if (!response.ok) {
     const errorData = await response.json();
-    logger.error(identifier, "OpenAI API error:", errorData);
+    logger.error(id, "OpenAI API error:", errorData);
     throw new Error(`OpenAI API Error: ${errorData.error.message}`);
   }
 
   const data = await response.json();
 
-  if (!data.choices || !data.choices.length) {
+  if (!data.choices?.length) {
     if (data.error) {
-      logger.error(identifier, "OpenAI error:", data.error);
-      throw new Error("OpenAI error: " + data.error.message);
+      logger.error(id, "OpenAI error:", data.error);
+      throw new Error(`OpenAI error: ${data.error.message}`);
     }
     throw new Error("OpenAI error: No choices returned.");
   }
@@ -523,227 +486,80 @@ async function callOpenAI(
   };
 }
 
-function truncatePayload(payload: OpenAIPayload): string {
-  return JSON.stringify(
+async function callOpenAiWithRetries(
+  id: Identifier,
+  openAiPayload: OpenAIPayload,
+  openAiConfig?: OpenAIConfig,
+  retries: number = 5,
+  chunkTimeoutMs: number = 15_000
+): Promise<ParsedResponseMessage> {
+  logger.log(
+    id,
+    "Calling OpenAI API with retries:",
+    openAiConfig?.service,
+    openAiPayload.model
+  );
+
+  const useStreaming =
+    openAiPayload.model !== GPTModel.O1_MINI &&
+    openAiPayload.model !== GPTModel.O1_PREVIEW;
+
+  return withRetries(
+    id,
+    "OpenAI",
+    async () => {
+      if (useStreaming) {
+        return callOpenAIStream(id, openAiPayload, openAiConfig, chunkTimeoutMs);
+      } else {
+        return callOpenAI(id, openAiPayload, openAiConfig);
+      }
+    },
     {
-      ...payload,
-      messages: payload.messages.map((message) => {
-        if (typeof message.content === "string") {
-          message.content = message.content.slice(0, 100);
-        } else if (Array.isArray(message.content)) {
-          message.content = message.content.map((block) => {
-            if (block.type === "image_url") {
-              block.image_url.url = block.image_url.url.slice(0, 100);
+      retries,
+      baseDelayMs: 250,
+      onError: (error, attempt) => {
+        logger.error(
+          id,
+          `Retry #${attempt} error: ${error.message}`,
+          error.response?.data || error.data || error
+        );
+
+        // Remove images on content policy violation
+        if (error.data?.code === "content_policy_violation") {
+          logger.log(id, "Removing images due to content policy violation");
+          openAiPayload.messages.forEach((message: OpenAIMessage) => {
+            if (Array.isArray(message.content)) {
+              message.content = message.content.filter(
+                (content) => content.type === "text"
+              );
             }
-            return block;
           });
         }
-
-        return message;
-      }),
-    },
-    null,
-    2
+      },
+    }
   );
 }
 
-async function callAnthropicWithRetries(
-  identifier: Identifier,
-  AiPayload: AnthropicAIPayload,
-  AiConfig?: AnthropicAIConfig,
-  attempts = 5
-): Promise<ParsedResponseMessage> {
-  logger.log(identifier, "Calling Anthropic API with retries");
-  let lastResponse;
-  for (let i = 0; i < attempts; i++) {
-    try {
-      lastResponse = await callAnthropic(identifier, AiPayload, AiConfig);
-      return lastResponse;
-    } catch (e: any) {
-      logger.error(
-        identifier,
-        `Retry #${i} error: ${e.message}`,
-        e.response?.data || e
-      );
-
-      if (e.response?.data?.error?.type === "rate_limit_error") {
-        // TODO: upgrade model or fallback to bedrock
-      }
-
-      await timeout(125 * i);
-    }
-  }
-  const error = new Error(
-    `Failed to call Anthropic API after ${attempts} attempts`
-  ) as any;
-  error.response = lastResponse;
-  throw error;
-}
-
-async function callAnthropic(
-  identifier: Identifier,
-  AiPayload: AnthropicAIPayload,
-  AiConfig?: AnthropicAIConfig
-): Promise<ParsedResponseMessage> {
-  const anthropicMessages = jigAnthropicMessages(AiPayload.messages);
-
-  let data;
-  let response;
-  if (AiConfig?.service === "bedrock") {
-    // DOES NOT SUPPORT TOOLS YET
-    const AWS_REGION = "us-east-1";
-    const MODEL_ID = "anthropic.claude-3-haiku-20240307-v1:0";
-
-    // set in environment
-    // process.env.AWS_ACCESS_KEY_ID = AWS_ACCESS_KEY_ID;
-    // process.env.AWS_SECRET_ACCESS_KEY = AWS_SECRET_ACCESS_KEY;
-
-    const client = new BedrockRuntimeClient({ region: AWS_REGION });
-    const payload = {
-      anthropic_version: "bedrock-2023-05-31",
-      max_tokens: 4096,
-      messages: anthropicMessages,
-      tools: AiPayload.functions?.map((f) => ({
-        ...f,
-        input_schema: f.parameters,
-        parameters: undefined,
-      })),
-    };
-
-    const response = await client.send(
-      new InvokeModelCommand({
-        contentType: "application/json",
-        body: JSON.stringify(payload),
-        modelId: MODEL_ID,
-      })
-    );
-
-    const decodedResponseBody = new TextDecoder().decode(response.body);
-    data = JSON.parse(decodedResponseBody);
-  } else {
-    // default to anthropic
-    const response = await axios.post(
-      "https://api.anthropic.com/v1/messages",
-      {
-        model: AiPayload.model,
-        messages: anthropicMessages,
-        tools: AiPayload.functions?.map((f) => ({
-          ...f,
-          input_schema: f.parameters,
-          parameters: undefined,
-        })),
-        temperature: AiPayload.temperature,
-        system: AiPayload.system,
-        max_tokens: 4096,
-      },
-      {
-        headers: {
-          "content-type": "application/json",
-          "x-api-key": process.env.ANTHROPIC_API_KEY as string,
-          "anthropic-version": "2023-06-01",
-          "anthropic-beta": "tools-2024-04-04",
-        },
-        timeout: 60000,
-      }
-    );
-
-    data = response.data;
-  }
-
-  const answers = data.content;
-
-  if (!answers[0]) {
-    logger.error(identifier, "Missing answer in Anthropic API:", data);
-    throw new Error("Missing answer in Anthropic API");
-  }
-
-  let textResponse = "";
-  let functionCalls: any[] = [];
-  for (const answer of answers) {
-    if (!answer.type) {
-      logger.error(identifier, "Missing answer type in Anthropic API:", data);
-      throw new Error("Missing answer type in Anthropic API");
-    }
-
-    let text = "";
-    if (answer.type === "text") {
-      text = answer.text
-        .replace(/<thinking>.*?<\/thinking>/gs, "")
-        .replace(/<answer>|<\/answer>/gs, "")
-        .trim();
-
-      if (!text) {
-        // remove the tags and return the text within
-        text = answer.text.replace(
-          /<thinking>|<\/thinking>|<answer>|<\/answer>/gs,
-          ""
-        );
-        logger.log(
-          identifier,
-          "No text in answer, returning text within tags:",
-          text
-        );
-      }
-
-      if (textResponse) {
-        textResponse += `\n\n${text}`;
-      } else {
-        textResponse = text;
-      }
-    } else if (answer.type === "tool_use") {
-      const call = {
-        name: answer.name,
-        arguments: answer.input,
-      };
-      functionCalls.push(call);
-    }
-  }
-
-  if (!textResponse && !functionCalls.length) {
-    logger.error(
-      identifier,
-      "Missing text & fns in Anthropic API response:",
-      data
-    );
-    throw new Error("Missing text & fns in Anthropic API response");
-  }
-
-  return {
-    role: "assistant",
-    content: textResponse,
-    function_call: functionCalls[0],
-    files: [],
-  };
-}
+// ─────────────────────────────────────────────────────────────────────────────
+// ANTHROPIC
+// ─────────────────────────────────────────────────────────────────────────────
 
 function jigAnthropicMessages(
   messages: AnthropicAIMessage[]
 ): AnthropicAIMessage[] {
-  // Takes a list if messages each with a role and content
-  // Assumes no system messages are present
-
   let jiggedMessages = messages.slice();
 
-  // If the first message is not user, add an empty user message at the start
+  // Ensure first message is from user
   if (jiggedMessages[0]?.role !== "user") {
-    jiggedMessages = [
-      {
-        role: "user" as const,
-        content: "...",
-      },
-      ...jiggedMessages,
-    ];
+    jiggedMessages = [{ role: "user" as const, content: "..." }, ...jiggedMessages];
   }
 
-  // Group consecutive messages with the same role, combining their content
+  // Group consecutive messages with the same role
   jiggedMessages = jiggedMessages.reduce((acc, message) => {
-    if (acc.length === 0) {
-      return [message];
-    }
+    if (acc.length === 0) return [message];
 
     const lastMessage = acc[acc.length - 1];
     if (lastMessage.role === message.role) {
-      // Combine content of messages with the same role
       const lastContent = Array.isArray(lastMessage.content)
         ? lastMessage.content
         : [{ type: "text" as const, text: lastMessage.content }];
@@ -767,36 +583,215 @@ function jigAnthropicMessages(
     return [...acc, message];
   }, [] as AnthropicAIMessage[]);
 
-  // If last message in array is assistant, then add an empty user message
+  // Ensure last message is from user
   if (jiggedMessages[jiggedMessages.length - 1]?.role === "assistant") {
-    jiggedMessages.push({
-      role: "user",
-      content: "...",
-    });
+    jiggedMessages.push({ role: "user", content: "..." });
   }
 
   return jiggedMessages;
 }
 
+async function prepareAnthropicPayload(
+  _identifier: Identifier,
+  payload: GenericPayload
+): Promise<AnthropicAIPayload> {
+  const preparedPayload: AnthropicAIPayload = {
+    model: payload.model as ClaudeModel,
+    messages: [],
+    functions: payload.functions,
+    temperature: payload.temperature,
+  };
+
+  for (const message of payload.messages) {
+    if (message.role === "system") {
+      preparedPayload.system = message.content;
+      continue;
+    }
+
+    const contentBlocks: AnthropicContentBlock[] = [];
+
+    if (message.content) {
+      contentBlocks.push({ type: "text", text: message.content });
+    }
+
+    for (const file of message.files || []) {
+      if (ALLOWED_IMAGE_MIME_TYPES.includes(file.mimeType)) {
+        if (file.url) {
+          contentBlocks.push({
+            type: "image",
+            source: {
+              type: "base64",
+              media_type: "image/png",
+              data: await getNormalizedBase64PNG(file.url, file.mimeType),
+            },
+          });
+          contentBlocks.push({ type: "text", text: `Image (${file.url})` });
+        } else if (file.data) {
+          contentBlocks.push({
+            type: "image",
+            source: {
+              type: "base64",
+              media_type: file.mimeType as any,
+              data: file.data,
+            },
+          });
+        }
+      } else if (file.url) {
+        // Non-image file with URL - add text reference
+        contentBlocks.push({
+          type: "text",
+          text: `File (${file.url})`,
+        });
+      }
+    }
+
+    preparedPayload.messages.push({
+      role: message.role,
+      content: contentBlocks,
+    });
+  }
+
+  return preparedPayload;
+}
+
+async function callAnthropic(
+  id: Identifier,
+  payload: AnthropicAIPayload,
+  config?: AnthropicAIConfig
+): Promise<ParsedResponseMessage> {
+  const anthropicMessages = jigAnthropicMessages(payload.messages);
+  const tools = payload.functions?.map((f) => ({
+    ...f,
+    input_schema: f.parameters,
+    parameters: undefined,
+  }));
+
+  let data;
+
+  if (config?.service === "bedrock") {
+    const AWS_REGION = "us-east-1";
+    const MODEL_ID = "anthropic.claude-3-haiku-20240307-v1:0";
+
+    const client = new BedrockRuntimeClient({ region: AWS_REGION });
+    const bedrockPayload = {
+      anthropic_version: "bedrock-2023-05-31",
+      max_tokens: 4096,
+      messages: anthropicMessages,
+      tools,
+    };
+
+    const response = await client.send(
+      new InvokeModelCommand({
+        contentType: "application/json",
+        body: JSON.stringify(bedrockPayload),
+        modelId: MODEL_ID,
+      })
+    );
+
+    const decodedResponseBody = new TextDecoder().decode(response.body);
+    data = JSON.parse(decodedResponseBody);
+  } else {
+    // Default: Anthropic API
+    const response = await axios.post(
+      "https://api.anthropic.com/v1/messages",
+      {
+        model: payload.model,
+        messages: anthropicMessages,
+        tools,
+        temperature: payload.temperature,
+        system: payload.system,
+        max_tokens: 4096,
+      },
+      {
+        headers: {
+          "content-type": "application/json",
+          "x-api-key": process.env.ANTHROPIC_API_KEY as string,
+          "anthropic-version": "2023-06-01",
+          "anthropic-beta": "tools-2024-04-04",
+        },
+        timeout: 60000,
+      }
+    );
+    data = response.data;
+  }
+
+  const answers = data.content;
+  if (!answers?.[0]) {
+    logger.error(id, "Missing answer in Anthropic API response:", data);
+    throw new Error("Missing answer in Anthropic API");
+  }
+
+  let textResponse = "";
+  const functionCalls: FunctionCall[] = [];
+
+  for (const answer of answers) {
+    if (!answer.type) {
+      logger.error(id, "Missing answer type in Anthropic API response:", data);
+      throw new Error("Missing answer type in Anthropic API");
+    }
+
+    if (answer.type === "text") {
+      let text = answer.text
+        .replace(/<thinking>.*?<\/thinking>/gs, "")
+        .replace(/<answer>|<\/answer>/gs, "")
+        .trim();
+
+      if (!text) {
+        text = answer.text.replace(
+          /<thinking>|<\/thinking>|<answer>|<\/answer>/gs,
+          ""
+        );
+        logger.log(id, "No text in answer, returning text within tags:", text);
+      }
+
+      textResponse = textResponse ? `${textResponse}\n\n${text}` : text;
+    } else if (answer.type === "tool_use") {
+      functionCalls.push({
+        name: answer.name,
+        arguments: answer.input,
+      });
+    }
+  }
+
+  if (!textResponse && !functionCalls.length) {
+    logger.error(id, "Missing text & functions in Anthropic API response:", data);
+    throw new Error("Missing text & functions in Anthropic API response");
+  }
+
+  return {
+    role: "assistant",
+    content: textResponse,
+    function_call: functionCalls[0] || null,
+    files: [],
+  };
+}
+
+async function callAnthropicWithRetries(
+  id: Identifier,
+  payload: AnthropicAIPayload,
+  config?: AnthropicAIConfig,
+  retries: number = 5
+): Promise<ParsedResponseMessage> {
+  return withRetries(id, "Anthropic", () => callAnthropic(id, payload, config), {
+    retries,
+  });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GOOGLE AI
+// ─────────────────────────────────────────────────────────────────────────────
+
 function jigGoogleMessages(messages: GoogleAIMessage[]): GoogleAIMessage[] {
   let jiggedMessages = messages.slice();
 
-  // If the first message is model, add an empty user message at the start
+  // Ensure first message is from user
   if (jiggedMessages[0]?.role === "model") {
-    jiggedMessages = [
-      {
-        role: "user" as const,
-        parts: [{ text: "..." }],
-      },
-      ...jiggedMessages,
-    ];
+    jiggedMessages = [{ role: "user" as const, parts: [{ text: "..." }] }, ...jiggedMessages];
   }
 
-  // Group consecutive messages with the same role, combining their parts
+  // Group consecutive messages with the same role
   jiggedMessages = jiggedMessages.reduce((acc, message) => {
-    if (acc.length === 0) {
-      return [message];
-    }
+    if (acc.length === 0) return [message];
 
     const lastMessage = acc[acc.length - 1];
     if (lastMessage.role === message.role) {
@@ -807,18 +802,16 @@ function jigGoogleMessages(messages: GoogleAIMessage[]): GoogleAIMessage[] {
     return [...acc, message];
   }, [] as GoogleAIMessage[]);
 
-  // If last message in array is model, then add an empty user message
+  // Ensure last message is from user
   if (jiggedMessages[jiggedMessages.length - 1]?.role === "model") {
-    jiggedMessages.push({
-      role: "user",
-      parts: [{ text: "..." }],
-    });
+    jiggedMessages.push({ role: "user", parts: [{ text: "..." }] });
   }
 
   return jiggedMessages;
 }
 
 async function prepareGoogleAIPayload(
+  _identifier: Identifier,
   payload: GenericPayload
 ): Promise<GoogleAIPayload> {
   const preparedPayload: GoogleAIPayload = {
@@ -829,7 +822,6 @@ async function prepareGoogleAIPayload(
           functionDeclarations: payload.functions.map((fn) => ({
             name: fn.name,
             parameters: {
-              // Google puts their description in the parameters object rather than in a top-level field
               description: fn.description,
               ...fn.parameters,
             },
@@ -844,56 +836,41 @@ async function prepareGoogleAIPayload(
       continue;
     }
 
-    const googleAIContentParts: GoogleAIPart[] = [];
+    const parts: GoogleAIPart[] = [];
 
     if (message.content) {
-      googleAIContentParts.push({
-        text: message.content,
-      });
+      parts.push({ text: message.content });
     }
 
     for (const file of message.files || []) {
-      if (!file.mimeType?.startsWith("image")) {
-        logger.warn(
-          "payload",
-          "Google AI API does not support non-image file types. Skipping file."
-        );
-        continue;
-      }
-
-      if (file.url) {
-        googleAIContentParts.push({
-          inlineData: {
-            mimeType: "image/png",
-            data: await getNormalizedBase64PNG(file.url, file.mimeType),
-          },
-        });
-        // Add the URL as a text part
-        googleAIContentParts.push({
-          text: `Image URL: ${file.url}`,
-        });
-      } else if (file.data) {
-        if (
-          !["image/png", "image/jpeg", "image/gif", "image/webp"].includes(
-            file.mimeType
-          )
-        ) {
-          throw new Error(
-            "Invalid image mimeType. Supported types are: image/png, image/jpeg, image/gif, image/webp"
-          );
+      if (ALLOWED_IMAGE_MIME_TYPES.includes(file.mimeType)) {
+        if (file.url) {
+          parts.push({
+            inlineData: {
+              mimeType: "image/png",
+              data: await getNormalizedBase64PNG(file.url, file.mimeType),
+            },
+          });
+          parts.push({ text: `Image (${file.url})` });
+        } else if (file.data) {
+          parts.push({
+            inlineData: {
+              mimeType: file.mimeType,
+              data: file.data,
+            },
+          });
         }
-        googleAIContentParts.push({
-          inlineData: {
-            mimeType: file.mimeType,
-            data: file.data,
-          },
+      } else if (file.url) {
+        // Non-image file with URL - add text reference
+        parts.push({
+          text: `File (${file.url})`,
         });
       }
     }
 
     preparedPayload.messages.push({
       role: message.role === "assistant" ? "model" : message.role,
-      parts: googleAIContentParts,
+      parts,
     });
   }
 
@@ -901,17 +878,14 @@ async function prepareGoogleAIPayload(
 }
 
 async function callGoogleAI(
-  identifier: Identifier,
+  id: Identifier,
   payload: GoogleAIPayload
 ): Promise<ParsedResponseMessage> {
   const googleMessages = jigGoogleMessages(payload.messages);
-
   const history = googleMessages.slice(0, -1);
   const lastMessage = googleMessages.slice(-1)[0];
 
-  const genAI = new GoogleGenAI({
-    apiKey: process.env.GEMINI_API_KEY,
-  });
+  const genAI = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
   const chat = genAI.chats.create({
     model: payload.model,
@@ -923,84 +897,51 @@ async function callGoogleAI(
     },
   });
 
-  const response = await chat.sendMessage({
-    message: lastMessage.parts,
-  });
+  const response = await chat.sendMessage({ message: lastMessage.parts });
 
-  let text: string = "";
+  let text = "";
   const files: File[] = [];
 
   for (const part of response.candidates?.[0]?.content?.parts || []) {
-    if (part.text) {
-      text += part.text;
-    }
-
-    if (part.inlineData) {
-      const imageData = part.inlineData.data;
-      if (imageData) {
-        files.push({
-          mimeType: "image/png",
-          data: imageData,
-        });
-      }
+    if (part.text) text += part.text;
+    if (part.inlineData?.data) {
+      files.push({ mimeType: "image/png", data: part.inlineData.data });
     }
   }
 
-  const functionCalls:
-    | {
-        name?: string;
-        args?: Record<string, any>;
-      }[]
-    | undefined = response.functionCalls;
-
-  const parsedFunctionCalls = functionCalls?.map((fc) => ({
+  const functionCalls = response.functionCalls?.map((fc) => ({
     name: fc.name ?? "",
     arguments: fc.args ?? {},
   }));
 
-  if (!text && !parsedFunctionCalls?.length && !files.length) {
+  if (!text && !functionCalls?.length && !files.length) {
     const candidate = response.candidates?.[0];
     const finishReason = candidate?.finishReason;
-    const safetyRatings = candidate?.safetyRatings;
-    const usageMetadata = response.usageMetadata;
-    const modelVersion = response.modelVersion;
 
-    logger.error(
-      identifier,
-      "Missing text & fns in Google AI API response:",
-      {
-        finishReason,
-        safetyRatings,
-        usageMetadata,
-        modelVersion,
-        candidateContent: candidate?.content,
-        promptFeedback: response.promptFeedback,
-        fullResponse: JSON.stringify(response),
-      }
-    );
+    logger.error(id, "Missing text & functions in Google AI API response:", {
+      finishReason,
+      safetyRatings: candidate?.safetyRatings,
+      usageMetadata: response.usageMetadata,
+      modelVersion: response.modelVersion,
+      candidateContent: candidate?.content,
+      promptFeedback: response.promptFeedback,
+    });
 
-    // Create a more descriptive error message based on the finish reason
-    let errorMessage = "Missing text & fns in Google AI API response";
+    let errorMessage = "Missing text & functions in Google AI API response";
     if (finishReason) {
-      errorMessage += `: finishReason=${finishReason}`;
-      if (finishReason === "MALFORMED_FUNCTION_CALL") {
-        errorMessage += " (Google could not generate valid function call arguments)";
-      } else if (finishReason === "SAFETY") {
-        errorMessage += " (blocked by safety filters)";
-      } else if (finishReason === "RECITATION") {
-        errorMessage += " (blocked due to recitation)";
-      } else if (finishReason === "MAX_TOKENS") {
-        errorMessage += " (response truncated due to max tokens)";
-      }
+      const reasonDescriptions: Record<string, string> = {
+        MALFORMED_FUNCTION_CALL: "(Google could not generate valid function call arguments)",
+        SAFETY: "(blocked by safety filters)",
+        RECITATION: "(blocked due to recitation)",
+        MAX_TOKENS: "(response truncated due to max tokens)",
+      };
+      errorMessage += `: finishReason=${finishReason} ${reasonDescriptions[finishReason] || ""}`;
     }
 
     const error = new Error(errorMessage) as any;
     error.finishReason = finishReason;
-    error.safetyRatings = safetyRatings;
-    error.usageMetadata = usageMetadata;
-    error.modelVersion = modelVersion;
-    error.candidateContent = candidate?.content;
-    error.promptFeedback = response.promptFeedback;
+    error.safetyRatings = candidate?.safetyRatings;
+    error.usageMetadata = response.usageMetadata;
     throw error;
   }
 
@@ -1008,298 +949,48 @@ async function callGoogleAI(
     role: "assistant",
     content: text || null,
     files,
-    function_call: parsedFunctionCalls?.[0] || null,
+    function_call: functionCalls?.[0] || null,
   };
 }
 
 async function callGoogleAIWithRetries(
-  identifier: Identifier,
+  id: Identifier,
   payload: GoogleAIPayload,
   retries: number = 5
 ): Promise<ParsedResponseMessage> {
-  logger.log(identifier, "Calling Google AI API with retries");
-
-  let lastError: any;
-  for (let i = 0; i < retries; i++) {
-    try {
-      return await callGoogleAI(identifier, payload);
-    } catch (e: any) {
-      lastError = e;
-
-      // Log structured error details from Google AI
+  return withRetries(id, "Google AI", () => callGoogleAI(id, payload), {
+    retries,
+    onError: (error, attempt) => {
       const errorDetails: Record<string, any> = {
-        message: e.message,
-        finishReason: e.finishReason,
-        modelVersion: e.modelVersion,
+        message: error.message,
+        finishReason: error.finishReason,
+        modelVersion: error.modelVersion,
       };
 
-      // Include safety ratings if present
-      if (e.safetyRatings) {
-        errorDetails.safetyRatings = e.safetyRatings;
-      }
+      if (error.safetyRatings) errorDetails.safetyRatings = error.safetyRatings;
+      if (error.usageMetadata) errorDetails.usageMetadata = error.usageMetadata;
+      if (error.promptFeedback) errorDetails.promptFeedback = error.promptFeedback;
+      if (error.status) errorDetails.httpStatus = error.status;
+      if (error.code) errorDetails.errorCode = error.code;
+      if (error.details) errorDetails.errorDetails = error.details;
 
-      // Include usage metadata if present
-      if (e.usageMetadata) {
-        errorDetails.usageMetadata = e.usageMetadata;
-      }
-
-      // Include prompt feedback if present (useful for blocked prompts)
-      if (e.promptFeedback) {
-        errorDetails.promptFeedback = e.promptFeedback;
-      }
-
-      // Include HTTP error details if present (from SDK errors)
-      if (e.status || e.statusText) {
-        errorDetails.httpStatus = e.status;
-        errorDetails.httpStatusText = e.statusText;
-      }
-
-      // Include error code/details from Google API errors
-      if (e.code) {
-        errorDetails.errorCode = e.code;
-      }
-      if (e.details) {
-        errorDetails.errorDetails = e.details;
-      }
-
-      logger.error(identifier, `Retry #${i} error: ${e.message}`, errorDetails);
-
-      // Handle specific Google AI errors
-      if (e.finishReason === "MALFORMED_FUNCTION_CALL" && i >= 3) {
-        // On 4th retry, try removing tools to get a text response instead
-        logger.log(
-          identifier,
-          "Removing tools due to persistent MALFORMED_FUNCTION_CALL errors"
-        );
-        payload.tools = undefined;
-      }
-
-      await timeout(125 * i); // Exponential backoff
-    }
-  }
-  const error = new Error(
-    `Failed to call Google AI API after ${retries} attempts`
-  ) as any;
-  error.cause = lastError; // Attach the last caught error
-  error.finishReason = lastError?.finishReason;
-  error.usageMetadata = lastError?.usageMetadata;
-  error.safetyRatings = lastError?.safetyRatings;
-  throw error;
+      logger.error(id, `Retry #${attempt} error: ${error.message}`, errorDetails);
+    },
+  });
 }
 
-export async function callWithRetries(
-  identifier: string | string[],
-  aiPayload: GenericPayload,
-  aiConfig?: OpenAIConfig | AnthropicAIConfig,
-  retries: number = 5,
-  chunkTimeoutMs: number = 15_000
-): Promise<ParsedResponseMessage> {
-  const id = identifier;
-  // Determine which service to use based on the model type
-  if (isAnthropicPayload(aiPayload)) {
-    return await callAnthropicWithRetries(
-      id,
-      await prepareAnthropicPayload(aiPayload),
-      aiConfig as AnthropicAIConfig,
-      retries
-    );
-  } else if (isOpenAiPayload(aiPayload)) {
-    return await callOpenAiWithRetries(
-      id,
-      await prepareOpenAIPayload(aiPayload),
-      aiConfig as OpenAIConfig,
-      retries,
-      chunkTimeoutMs
-    );
-  } else if (isGroqPayload(aiPayload)) {
-    return await callGroqWithRetries(id, await prepareGroqPayload(aiPayload));
-  } else if (isGoogleAIPayload(aiPayload)) {
-    return await callGoogleAIWithRetries(
-      id,
-      await prepareGoogleAIPayload(aiPayload),
-      retries
-    );
-  } else {
-    throw new Error("Invalid AI payload: Unknown model type.");
-  }
-}
+// ─────────────────────────────────────────────────────────────────────────────
+// GROQ
+// ─────────────────────────────────────────────────────────────────────────────
 
-function isAnthropicPayload(payload: any): Boolean {
-  return Object.values(ClaudeModel).includes(payload.model);
-}
-
-async function prepareAnthropicPayload(
-  payload: GenericPayload
-): Promise<AnthropicAIPayload> {
-  const preparedPayload: AnthropicAIPayload = {
-    model: payload.model as ClaudeModel,
-    messages: [],
-    functions: payload.functions,
-    temperature: payload.temperature,
-  };
-
-  for (const message of payload.messages) {
-    const anthropicContentBlocks: AnthropicContentBlock[] = [];
-
-    if (message.role === "system") {
-      preparedPayload.system = message.content;
-      continue;
-    }
-
-    if (message.content) {
-      anthropicContentBlocks.push({
-        type: "text",
-        text: message.content,
-      });
-    }
-
-    for (const file of message.files || []) {
-      if (!file.mimeType?.startsWith("image")) {
-        logger.warn(
-          "payload",
-          "Anthropic API does not support non-image file types. Skipping file."
-        );
-        continue;
-      }
-
-      if (file.url) {
-        anthropicContentBlocks.push({
-          type: "image",
-          source: {
-            type: "base64",
-            media_type: "image/png",
-            data: await getNormalizedBase64PNG(file.url, file.mimeType),
-          },
-        });
-      } else if (file.data) {
-        if (
-          !["image/png", "image/jpeg", "image/gif", "image/webp"].includes(
-            file.mimeType
-          )
-        ) {
-          throw new Error(
-            "Invalid image mimeType. Supported types are: image/png, image/jpeg, image/gif, image/webp"
-          );
-        }
-        anthropicContentBlocks.push({
-          type: "image",
-          source: {
-            type: "base64",
-            media_type: file.mimeType as any,
-            data: file.data,
-          },
-        });
-      }
-    }
-
-    preparedPayload.messages.push({
-      role: message.role,
-      content: anthropicContentBlocks,
-    });
-  }
-
-  return preparedPayload;
-}
-
-function isOpenAiPayload(payload: any): Boolean {
-  return Object.values(GPTModel).includes(payload.model);
-}
-
-async function prepareOpenAIPayload(
-  payload: GenericPayload
-): Promise<OpenAIPayload> {
-  const preparedPayload: OpenAIPayload = {
-    model: payload.model as GPTModel,
-    messages: [],
-    tools: payload.functions?.map((fn) => ({
-      type: "function",
-      function: fn,
-    })),
-    tool_choice: payload.function_call
-      ? typeof payload.function_call === "string"
-        ? payload.function_call // "none" | "auto"
-        : {
-            type: "function",
-            function: payload.function_call,
-          }
-      : undefined,
-  };
-
-  for (const message of payload.messages) {
-    const openAIContentBlocks: OpenAIContentBlock[] = [];
-
-    if (message.content) {
-      openAIContentBlocks.push({
-        type: "text",
-        text: message.content,
-      });
-    }
-
-    const allowedFileMimeTypes = [
-      "image/png",
-      "image/jpeg",
-      "image/gif",
-      "image/webp",
-    ];
-
-    for (const file of message.files || []) {
-      if (allowedFileMimeTypes.includes(file.mimeType)) {
-        if (file.url) {
-          openAIContentBlocks.push({
-            type: "image_url",
-            image_url: {
-              url: file.url,
-            },
-          });
-          // Add the URL as a text part
-          openAIContentBlocks.push({
-            type: "text",
-            text: `Image URL: ${file.url}`,
-          });
-        } else if (file.data) {
-          openAIContentBlocks.push({
-            type: "image_url",
-            image_url: {
-              url: `data:${file.mimeType};base64,${file.data}`,
-            },
-          });
-        }
-        // } else if (file.mimeType?.startsWith("audio")) {
-        //   if (file.url) {
-        //     openAIContentBlocks.push({
-        //       type: "audio_url",
-        //       audio_url: {
-        //         url: file.url,
-        //       },
-        //     });
-        //   } else if (file.data) {
-        //     openAIContentBlocks.push({
-        //       type: "audio_url",
-        //       audio_url: {
-        //         url: `data:${file.mimeType};base64,${file.data}`,
-        //       },
-        //     });
-        //   }
-      } else {
-        logger.warn(
-          "payload",
-          "Skipping file in message. File or image type not supported by OpenAI API:",
-          file.mimeType
-        );
-      }
-    }
-
-    preparedPayload.messages.push({
-      role: message.role,
-      content: openAIContentBlocks,
-    });
-  }
-
-  return preparedPayload;
-}
-
-function isGroqPayload(payload: any): Boolean {
-  return Object.values(GroqModel).includes(payload.model);
+function normalizeMessageContent(
+  content: AnthropicAIMessage["content"]
+): string {
+  return Array.isArray(content)
+    ? content
+        .map((c) => (c.type === "text" ? c.text : `[${c.type}]`))
+        .join("\n")
+    : content;
 }
 
 function prepareGroqPayload(payload: GenericPayload): GroqPayload {
@@ -1315,32 +1006,15 @@ function prepareGroqPayload(payload: GenericPayload): GroqPayload {
     })),
     tool_choice: payload.function_call
       ? typeof payload.function_call === "string"
-        ? payload.function_call // "none" | "auto"
-        : {
-            type: "function",
-            function: payload.function_call,
-          }
+        ? payload.function_call
+        : { type: "function", function: payload.function_call }
       : undefined,
     temperature: payload.temperature,
   };
 }
 
-function normalizeMessageContent(
-  content: AnthropicAIMessage["content"]
-): string {
-  return Array.isArray(content)
-    ? content
-        .map((c) => (c.type === "text" ? c.text : `[${c.type}]`))
-        .join("\n")
-    : content;
-}
-
-function isGoogleAIPayload(payload: any): Boolean {
-  return Object.values(GeminiModel).includes(payload.model);
-}
-
 async function callGroq(
-  identifier: Identifier,
+  id: Identifier,
   payload: GroqPayload
 ): Promise<ParsedResponseMessage> {
   const response = await axios.post(
@@ -1354,17 +1028,14 @@ async function callGroq(
     }
   );
 
-  const data = response.data;
-
-  const answer = data.choices[0].message;
+  const answer = response.data.choices[0]?.message;
   if (!answer) {
-    logger.error(identifier, "Missing answer in Groq API:", data);
+    logger.error(id, "Missing answer in Groq API response:", response.data);
     throw new Error("Missing answer in Groq API");
   }
 
-  const textResponse = answer.content || null;
   let functionCall: FunctionCall | null = null;
-  if (answer.tool_calls && answer.tool_calls.length) {
+  if (answer.tool_calls?.length) {
     const toolCall = answer.tool_calls[0];
     functionCall = {
       name: toolCall.function.name,
@@ -1374,105 +1045,77 @@ async function callGroq(
 
   return {
     role: "assistant",
-    content: textResponse,
+    content: answer.content || null,
     function_call: functionCall,
     files: [],
   };
 }
 
 async function callGroqWithRetries(
-  identifier: Identifier,
+  id: Identifier,
   payload: GroqPayload,
   retries: number = 5
 ): Promise<ParsedResponseMessage> {
-  logger.log(identifier, "Calling Groq API with retries");
-
-  let lastResponse;
-  for (let i = 0; i < retries; i++) {
-    try {
-      lastResponse = await callGroq(identifier, payload);
-      return lastResponse;
-    } catch (e: any) {
-      logger.error(
-        identifier,
-        `Retry #${i} error: ${e.message}`,
-        e.response?.data || e
-      );
-
-      await timeout(125 * i);
-    }
-  }
-  const error = new Error(
-    `Failed to call Groq API after ${retries} attempts`
-  ) as any;
-  error.response = lastResponse;
-  throw error;
+  return withRetries(id, "Groq", () => callGroq(id, payload), { retries });
 }
 
-async function getNormalizedBase64PNG(
-  url: string,
-  mime: string
-): Promise<string> {
-  const response = await axios.get(url, { responseType: "arraybuffer" });
+// ─────────────────────────────────────────────────────────────────────────────
+// MAIN ENTRY POINT
+// ─────────────────────────────────────────────────────────────────────────────
 
-  let imageBuffer = Buffer.from(response.data);
-  let sharpOptions = {};
-  if (isHeicImage(url, mime)) {
-    const imageData = await decode({ buffer: imageBuffer });
-    imageBuffer = Buffer.from(imageData.data);
-    sharpOptions = {
-      raw: {
-        width: imageData.width,
-        height: imageData.height,
-        channels: 4,
-      },
-    };
-  }
-
-  // Limits size of image to < 5MB Anthropic limit
-  const resizedBuffer = await sharp(imageBuffer, sharpOptions)
-    .withMetadata()
-    .resize(1024, 1024, { fit: "inside", withoutEnlargement: true })
-    .png()
-    .toBuffer();
-
-  return resizedBuffer.toString("base64");
+function isAnthropicPayload(payload: GenericPayload): boolean {
+  return Object.values(ClaudeModel).includes(payload.model as ClaudeModel);
 }
 
-// async function main() {
-//   const payload: GenericPayload = {
-//     model: GeminiModel.GEMINI_15_PRO,
-//     messages: [
-//       {
-//         role: "user",
-//         content: "What is this logo?",
-//         files: [
-//           {
-//             mimeType: "image/png",
-//             url: "https://www.wikimedia.org/static/images/wmf-logo-2x.png",
-//           },
-//         ],
-//       },
-//     ],
-//     functions: [
-//       {
-//         name: "answer_logo_question",
-//         description: "Answer a question about a logo",
-//         parameters: {
-//           type: "object",
-//           properties: {
-//             organization: {
-//               type: "string",
-//             },
-//           },
-//         },
-//       },
-//     ],
-//   };
+function isOpenAiPayload(payload: GenericPayload): boolean {
+  return Object.values(GPTModel).includes(payload.model as GPTModel);
+}
 
-//   const answer = await callWithRetries("test", payload);
+function isGroqPayload(payload: GenericPayload): boolean {
+  return Object.values(GroqModel).includes(payload.model as GroqModel);
+}
 
-//   console.log(answer);
-// }
+function isGoogleAIPayload(payload: GenericPayload): boolean {
+  return Object.values(GeminiModel).includes(payload.model as GeminiModel);
+}
 
-// main();
+export async function callWithRetries(
+  id: string | string[],
+  aiPayload: GenericPayload,
+  aiConfig?: OpenAIConfig | AnthropicAIConfig,
+  retries: number = 5,
+  chunkTimeoutMs: number = 15_000
+): Promise<ParsedResponseMessage> {
+  if (isAnthropicPayload(aiPayload)) {
+    return callAnthropicWithRetries(
+      id,
+      await prepareAnthropicPayload(id, aiPayload),
+      aiConfig as AnthropicAIConfig,
+      retries
+    );
+  }
+
+  if (isOpenAiPayload(aiPayload)) {
+    return callOpenAiWithRetries(
+      id,
+      await prepareOpenAIPayload(id, aiPayload),
+      aiConfig as OpenAIConfig,
+      retries,
+      chunkTimeoutMs
+    );
+  }
+
+  if (isGroqPayload(aiPayload)) {
+    return callGroqWithRetries(id, prepareGroqPayload(aiPayload), retries);
+  }
+
+  if (isGoogleAIPayload(aiPayload)) {
+    return callGoogleAIWithRetries(
+      id,
+      await prepareGoogleAIPayload(id, aiPayload),
+      retries
+    );
+  }
+
+  throw new Error("Invalid AI payload: Unknown model type.");
+}

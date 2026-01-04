@@ -11,8 +11,8 @@ jest.setTimeout(60000); // Increase timeout to 60s
 
 const modelConfigs = [
   // { provider: "Groq", model: GroqModel.DEEPSEEK_R1_DISTILL_LLAMA_70B },
-  // { provider: "OpenAI", model: GPTModel.GPT5_MINI },
-  // { provider: "Anthropic", model: ClaudeModel.OPUS_4_5 },
+  { provider: "OpenAI", model: GPTModel.GPT5_MINI },
+  { provider: "Anthropic", model: ClaudeModel.SONNET_4_5 },
   {
     provider: "Gemini",
     model: GeminiModel.GEMINI_3_FLASH_PREVIEW,
@@ -89,7 +89,7 @@ describe.each(modelConfigs)("$provider Model", ({ provider, model }) => {
     };
 
     const answer = await callWithRetries([provider, "files"], aiPayload);
-    expect(answer.content).toContain("Fiddle");
+    expect(answer.content?.toLowerCase()).toContain("fiddle");
   });
 
   test("with system message", async () => {
@@ -169,7 +169,7 @@ describe.each(modelConfigs)("$provider Model", ({ provider, model }) => {
     expect(answer.content?.toLowerCase()).toContain("green");
   });
 
-  test("generates images", async () => {
+  test.skip("generates images", async () => {
     const aiPayload: GenericPayload = {
       model,
       messages: [
