@@ -953,11 +953,47 @@ async function callGoogleAI(
   };
 }
 
+/**
+ * Content violation finish reasons that should trigger circuit breaker behavior.
+ * These errors won't resolve with simple retries - the content itself is the problem.
+ */
+const CONTENT_VIOLATION_REASONS = new Set([
+  "PROHIBITED_CONTENT",
+  "SAFETY",
+]);
+
+/**
+ * Removes inline image data from Google AI messages, preserving text content.
+ * Used as a fallback when content violations are detected.
+ */
+function removeImagesFromGooglePayload(payload: GoogleAIPayload): boolean {
+  let removedImages = false;
+
+  for (const message of payload.messages) {
+    message.parts = message.parts.filter((part) => {
+      if ("inlineData" in part) {
+        removedImages = true;
+        return false;
+      }
+      return true;
+    });
+
+    // Ensure message still has content after removing images
+    if (message.parts.length === 0) {
+      message.parts = [{ text: "(image removed due to content policy)" }];
+    }
+  }
+
+  return removedImages;
+}
+
 async function callGoogleAIWithRetries(
   id: Identifier,
   payload: GoogleAIPayload,
   retries: number = 5
 ): Promise<ParsedResponseMessage> {
+  let hasTriedWithoutImages = false;
+
   return withRetries(id, "Google AI", () => callGoogleAI(id, payload), {
     retries,
     onError: (error, attempt) => {
@@ -975,6 +1011,35 @@ async function callGoogleAIWithRetries(
       if (error.details) errorDetails.errorDetails = error.details;
 
       logger.error(id, `Retry #${attempt} error: ${error.message}`, errorDetails);
+
+      // Circuit breaker: detect content violations and try removing images
+      if (CONTENT_VIOLATION_REASONS.has(error.finishReason)) {
+        if (!hasTriedWithoutImages) {
+          const removedImages = removeImagesFromGooglePayload(payload);
+          if (removedImages) {
+            logger.log(
+              id,
+              `Circuit breaker triggered: removing images due to ${error.finishReason}`
+            );
+            hasTriedWithoutImages = true;
+            return; // Continue to next retry with images removed
+          }
+        }
+
+        // If we already tried without images or there were no images, fail fast
+        logger.error(
+          id,
+          `Circuit breaker: failing fast due to ${error.finishReason} (no more fallbacks)`
+        );
+        const circuitBreakerError = new Error(
+          `Google AI content violation: ${error.finishReason}. Request cannot succeed with current content.`
+        ) as any;
+        circuitBreakerError.finishReason = error.finishReason;
+        circuitBreakerError.safetyRatings = error.safetyRatings;
+        circuitBreakerError.usageMetadata = error.usageMetadata;
+        circuitBreakerError.circuitBreaker = true;
+        throw circuitBreakerError;
+      }
     },
   });
 }
