@@ -942,6 +942,7 @@ async function callGoogleAI(
     error.finishReason = finishReason;
     error.safetyRatings = candidate?.safetyRatings;
     error.usageMetadata = response.usageMetadata;
+    error.promptFeedback = response.promptFeedback;
     throw error;
   }
 
@@ -1013,13 +1014,18 @@ async function callGoogleAIWithRetries(
       logger.error(id, `Retry #${attempt} error: ${error.message}`, errorDetails);
 
       // Circuit breaker: detect content violations and try removing images
-      if (CONTENT_VIOLATION_REASONS.has(error.finishReason)) {
+      // Check both finishReason (candidate-level) and promptFeedback.blockReason (prompt-level)
+      const violationReason =
+        (CONTENT_VIOLATION_REASONS.has(error.finishReason) && error.finishReason) ||
+        (CONTENT_VIOLATION_REASONS.has(error.promptFeedback?.blockReason) && error.promptFeedback?.blockReason);
+
+      if (violationReason) {
         if (!hasTriedWithoutImages) {
           const removedImages = removeImagesFromGooglePayload(payload);
           if (removedImages) {
             logger.log(
               id,
-              `Circuit breaker triggered: removing images due to ${error.finishReason}`
+              `Circuit breaker triggered: removing images due to ${violationReason}`
             );
             hasTriedWithoutImages = true;
             return; // Continue to next retry with images removed
@@ -1029,10 +1035,10 @@ async function callGoogleAIWithRetries(
         // If we already tried without images or there were no images, fail fast
         logger.error(
           id,
-          `Circuit breaker: failing fast due to ${error.finishReason} (no more fallbacks)`
+          `Circuit breaker: failing fast due to ${violationReason} (no more fallbacks)`
         );
         const circuitBreakerError = new Error(
-          `Google AI content violation: ${error.finishReason}. Request cannot succeed with current content.`
+          `Google AI content violation: ${violationReason}. Request cannot succeed with current content.`
         ) as any;
         circuitBreakerError.finishReason = error.finishReason;
         circuitBreakerError.safetyRatings = error.safetyRatings;
