@@ -251,12 +251,15 @@ export interface GoogleAIPayload {
   systemInstruction?: string;
 }
 
+export type AnyModel = GPTModel | ClaudeModel | GroqModel | GeminiModel;
+
 export interface GenericPayload {
-  model: GPTModel | ClaudeModel | GroqModel | GeminiModel;
+  model: AnyModel;
   messages: GenericMessage[];
   functions?: FunctionDefinition[];
   function_call?: "none" | "auto" | { name: string };
   temperature?: number;
+  fallbackModel?: AnyModel;
 }
 
 export interface OpenAIBody {

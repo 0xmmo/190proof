@@ -20,6 +20,7 @@ import {
   GoogleAIPart,
   File,
   GoogleAIMessage,
+  AnyModel,
 } from "./interfaces";
 import logger, { Identifier } from "./logger";
 import {
@@ -42,6 +43,7 @@ export {
   FunctionDefinition,
   GenericMessage,
   GenericPayload,
+  AnyModel,
 } from "./interfaces";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1157,36 +1159,53 @@ export async function callWithRetries(
   retries: number = 5,
   chunkTimeoutMs: number = 15_000
 ): Promise<ParsedResponseMessage> {
-  if (isAnthropicPayload(aiPayload)) {
-    return callAnthropicWithRetries(
-      id,
-      await prepareAnthropicPayload(id, aiPayload),
-      aiConfig as AnthropicAIConfig,
-      retries
-    );
-  }
+  try {
+    if (isAnthropicPayload(aiPayload)) {
+      return await callAnthropicWithRetries(
+        id,
+        await prepareAnthropicPayload(id, aiPayload),
+        aiConfig as AnthropicAIConfig,
+        retries
+      );
+    }
 
-  if (isOpenAiPayload(aiPayload)) {
-    return callOpenAiWithRetries(
-      id,
-      await prepareOpenAIPayload(id, aiPayload),
-      aiConfig as OpenAIConfig,
-      retries,
-      chunkTimeoutMs
-    );
-  }
+    if (isOpenAiPayload(aiPayload)) {
+      return await callOpenAiWithRetries(
+        id,
+        await prepareOpenAIPayload(id, aiPayload),
+        aiConfig as OpenAIConfig,
+        retries,
+        chunkTimeoutMs
+      );
+    }
 
-  if (isGroqPayload(aiPayload)) {
-    return callGroqWithRetries(id, prepareGroqPayload(aiPayload), retries);
-  }
+    if (isGroqPayload(aiPayload)) {
+      return await callGroqWithRetries(id, prepareGroqPayload(aiPayload), retries);
+    }
 
-  if (isGoogleAIPayload(aiPayload)) {
-    return callGoogleAIWithRetries(
-      id,
-      await prepareGoogleAIPayload(id, aiPayload),
-      retries
-    );
-  }
+    if (isGoogleAIPayload(aiPayload)) {
+      return await callGoogleAIWithRetries(
+        id,
+        await prepareGoogleAIPayload(id, aiPayload),
+        retries
+      );
+    }
 
-  throw new Error("Invalid AI payload: Unknown model type.");
+    throw new Error("Invalid AI payload: Unknown model type.");
+  } catch (error) {
+    if (aiPayload.fallbackModel) {
+      logger.log(
+        id,
+        `Primary model ${aiPayload.model} failed, falling back to ${aiPayload.fallbackModel}`
+      );
+      return callWithRetries(
+        id,
+        { ...aiPayload, model: aiPayload.fallbackModel, fallbackModel: undefined },
+        aiConfig,
+        retries,
+        chunkTimeoutMs
+      );
+    }
+    throw error;
+  }
 }
