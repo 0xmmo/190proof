@@ -362,6 +362,7 @@ async function callOpenAIStream(
   let paragraph = "";
   let functionCallName = "";
   let functionCallArgs = "";
+  let hasMultipleToolCalls = false;
 
   const reader = response.body.getReader();
   let partialChunk = "";
@@ -396,6 +397,12 @@ async function callOpenAIStream(
       if (!jsonString) continue;
 
       if (jsonString.includes("[DONE]")) {
+        if (hasMultipleToolCalls) {
+          logger.warn(
+            id,
+            "Discarding additional OpenAI function call(s) from stream (only first tool_call processed)"
+          );
+        }
         return parseStreamedResponse(
           id,
           paragraph,
@@ -427,7 +434,11 @@ async function callOpenAIStream(
         continue;
       }
 
-      const toolCall = json.choices[0]?.delta?.tool_calls?.[0];
+      const toolCalls = json.choices[0]?.delta?.tool_calls;
+      if (toolCalls?.length > 1 || (toolCalls?.[0]?.index && toolCalls[0].index > 0)) {
+        hasMultipleToolCalls = true;
+      }
+      const toolCall = toolCalls?.[0];
       if (toolCall?.index === 0 || toolCall?.index === undefined) {
         if (toolCall?.function?.name) functionCallName += toolCall.function.name;
         if (toolCall?.function?.arguments) functionCallArgs += toolCall.function.arguments;
@@ -473,12 +484,33 @@ async function callOpenAI(
   }
 
   const choice = data.choices[0];
-  const functionCall = choice.function_call
-    ? {
-        name: choice.function_call.name,
-        arguments: JSON.parse(choice.function_call.arguments),
-      }
-    : null;
+
+  // Check for tool_calls (modern API) first, fall back to function_call (legacy)
+  const toolCalls = choice.message?.tool_calls;
+  let functionCall: FunctionCall | null = null;
+
+  if (toolCalls?.length) {
+    functionCall = {
+      name: toolCalls[0].function.name,
+      arguments: JSON.parse(toolCalls[0].function.arguments),
+    };
+
+    if (toolCalls.length > 1) {
+      logger.warn(
+        id,
+        `Discarding ${toolCalls.length - 1} additional OpenAI function call(s):`,
+        toolCalls.slice(1).map((tc: any) => ({
+          name: tc.function.name,
+          arguments: JSON.parse(tc.function.arguments),
+        }))
+      );
+    }
+  } else if (choice.function_call) {
+    functionCall = {
+      name: choice.function_call.name,
+      arguments: JSON.parse(choice.function_call.arguments),
+    };
+  }
 
   return {
     role: "assistant",
@@ -760,6 +792,14 @@ async function callAnthropic(
     throw new Error("Missing text & functions in Anthropic API response");
   }
 
+  if (functionCalls.length > 1) {
+    logger.warn(
+      id,
+      `Discarding ${functionCalls.length - 1} additional Anthropic function call(s):`,
+      functionCalls.slice(1)
+    );
+  }
+
   return {
     role: "assistant",
     content: textResponse,
@@ -915,6 +955,14 @@ async function callGoogleAI(
     name: fc.name ?? "",
     arguments: fc.args ?? {},
   }));
+
+  if (functionCalls && functionCalls.length > 1) {
+    logger.warn(
+      id,
+      `Discarding ${functionCalls.length - 1} additional Google AI function call(s):`,
+      functionCalls.slice(1)
+    );
+  }
 
   if (!text && !functionCalls?.length && !files.length) {
     const candidate = response.candidates?.[0];
@@ -1114,6 +1162,17 @@ async function callGroq(
       name: toolCall.function.name,
       arguments: JSON.parse(toolCall.function.arguments),
     };
+
+    if (answer.tool_calls.length > 1) {
+      logger.warn(
+        id,
+        `Discarding ${answer.tool_calls.length - 1} additional Groq function call(s):`,
+        answer.tool_calls.slice(1).map((tc: any) => ({
+          name: tc.function.name,
+          arguments: JSON.parse(tc.function.arguments),
+        }))
+      );
+    }
   }
 
   return {
