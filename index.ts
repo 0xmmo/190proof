@@ -496,14 +496,9 @@ async function callOpenAI(
     };
 
     if (toolCalls.length > 1) {
-      logger.warn(
-        id,
-        `Discarding ${toolCalls.length - 1} additional OpenAI function call(s):`,
-        toolCalls.slice(1).map((tc: any) => ({
-          name: tc.function.name,
-          arguments: JSON.parse(tc.function.arguments),
-        }))
-      );
+      const allNames = toolCalls.map((tc: any) => tc.function.name).join(", ");
+      const discarded = toolCalls.slice(1).map((tc: any) => `tool ${tc.function.name} with args ${JSON.stringify(JSON.parse(tc.function.arguments))}`).join(", ");
+      logger.warn(id, `got ${toolCalls.length} tool calls for tools ${allNames}. using tool ${toolCalls[0].function.name} with args ${JSON.stringify(JSON.parse(toolCalls[0].function.arguments))} discarding ${discarded}`);
     }
   } else if (choice.function_call) {
     functionCall = {
@@ -793,11 +788,9 @@ async function callAnthropic(
   }
 
   if (functionCalls.length > 1) {
-    logger.warn(
-      id,
-      `Discarding ${functionCalls.length - 1} additional Anthropic function call(s):`,
-      functionCalls.slice(1)
-    );
+    const allNames = functionCalls.map((fc) => fc.name).join(", ");
+    const discarded = functionCalls.slice(1).map((fc) => `tool ${fc.name} with args ${JSON.stringify(fc.arguments)}`).join(", ");
+    logger.warn(id, `got ${functionCalls.length} tool calls for tools ${allNames}. using tool ${functionCalls[0].name} with args ${JSON.stringify(functionCalls[0].arguments)} discarding ${discarded}`);
   }
 
   return {
@@ -957,11 +950,9 @@ async function callGoogleAI(
   }));
 
   if (functionCalls && functionCalls.length > 1) {
-    logger.warn(
-      id,
-      `Discarding ${functionCalls.length - 1} additional Google AI function call(s):`,
-      functionCalls.slice(1)
-    );
+    const allNames = functionCalls.map((fc) => fc.name).join(", ");
+    const discarded = functionCalls.slice(1).map((fc) => `tool ${fc.name} with args ${JSON.stringify(fc.arguments)}`).join(", ");
+    logger.warn(id, `got ${functionCalls.length} tool calls for tools ${allNames}. using tool ${functionCalls[0].name} with args ${JSON.stringify(functionCalls[0].arguments)} discarding ${discarded}`);
   }
 
   if (!text && !functionCalls?.length && !files.length) {
@@ -1164,14 +1155,9 @@ async function callGroq(
     };
 
     if (answer.tool_calls.length > 1) {
-      logger.warn(
-        id,
-        `Discarding ${answer.tool_calls.length - 1} additional Groq function call(s):`,
-        answer.tool_calls.slice(1).map((tc: any) => ({
-          name: tc.function.name,
-          arguments: JSON.parse(tc.function.arguments),
-        }))
-      );
+      const allNames = answer.tool_calls.map((tc: any) => tc.function.name).join(", ");
+      const discarded = answer.tool_calls.slice(1).map((tc: any) => `tool ${tc.function.name} with args ${JSON.stringify(JSON.parse(tc.function.arguments))}`).join(", ");
+      logger.warn(id, `got ${answer.tool_calls.length} tool calls for tools ${allNames}. using tool ${answer.tool_calls[0].function.name} with args ${JSON.stringify(JSON.parse(answer.tool_calls[0].function.arguments))} discarding ${discarded}`);
     }
   }
 
