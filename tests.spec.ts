@@ -69,6 +69,56 @@ describe.each(modelConfigs)("$provider Model", ({ provider, model }) => {
     expect(answer.function_call?.name).toEqual("get_weather");
     expect(answer.function_call?.arguments).toBeDefined();
     expect(answer.function_call?.arguments?.city_name).toBeDefined();
+    expect(answer.function_calls.length).toBeGreaterThanOrEqual(1);
+    expect(answer.function_calls[0].name).toEqual("get_weather");
+  });
+
+  test("with parallel function calls", async () => {
+    const aiPayload: GenericPayload = {
+      model,
+      messages: [
+        {
+          role: "system",
+          content:
+            "You MUST call the get_weather function once for each city mentioned. Always make multiple parallel function calls when asked about multiple cities. Never combine cities into a single call.",
+        },
+        {
+          role: "user",
+          content:
+            "What is the weather in Tokyo and New York?",
+        },
+      ],
+      functions: [
+        {
+          name: "get_weather",
+          description: "Get the weather of a given city",
+          parameters: {
+            type: "object",
+            properties: {
+              city_name: {
+                type: "string",
+                description: "The name of the city",
+              },
+            },
+            required: ["city_name"],
+          },
+        },
+      ],
+    };
+
+    const answer = await callWithRetries(
+      [provider, "parallel_functions"],
+      aiPayload
+    );
+    expect(answer).toBeDefined();
+    expect(answer.function_calls.length).toBeGreaterThanOrEqual(2);
+    const cityNames = answer.function_calls.map(
+      (fc) => fc.arguments.city_name?.toLowerCase()
+    );
+    expect(cityNames).toContain("tokyo");
+    expect(cityNames).toContain("new york");
+    // function_call should still be the first one for backward compat
+    expect(answer.function_call).toEqual(answer.function_calls[0]);
   });
 
   test("with image in message", async () => {

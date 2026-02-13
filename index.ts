@@ -98,39 +98,40 @@ async function withRetries<T>(
 function parseStreamedResponse(
   identifier: Identifier,
   paragraph: string,
-  functionCallName: string,
-  functionCallArgs: string,
+  toolCallAccumulators: { name: string; arguments: string }[],
   allowedFunctionNames: Set<string> | null
 ): ParsedResponseMessage {
-  let functionCall: ParsedResponseMessage["function_call"] = null;
+  const functionCalls: FunctionCall[] = [];
 
-  if (functionCallName && functionCallArgs) {
-    if (allowedFunctionNames && !allowedFunctionNames.has(functionCallName)) {
+  for (const acc of toolCallAccumulators) {
+    if (!acc.name || !acc.arguments) continue;
+
+    if (allowedFunctionNames && !allowedFunctionNames.has(acc.name)) {
       throw new Error(
-        `Stream error: received function call with unknown name: ${functionCallName}`
+        `Stream error: received function call with unknown name: ${acc.name}`
       );
     }
 
     try {
-      functionCall = {
-        name: functionCallName,
-        arguments: JSON.parse(functionCallArgs),
-      };
+      functionCalls.push({
+        name: acc.name,
+        arguments: JSON.parse(acc.arguments),
+      });
     } catch (error) {
       logger.error(
         identifier,
         "Error parsing function call arguments:",
-        functionCallArgs
+        acc.arguments
       );
       throw error;
     }
   }
 
-  if (!paragraph && !functionCall) {
+  if (!paragraph && !functionCalls.length) {
     logger.error(
       identifier,
       "Stream error: received message without content or function_call:",
-      JSON.stringify({ paragraph, functionCallName, functionCallArgs })
+      JSON.stringify({ paragraph, toolCallAccumulators })
     );
     throw new Error(
       "Stream error: received message without content or function_call"
@@ -140,7 +141,8 @@ function parseStreamedResponse(
   return {
     role: "assistant",
     content: paragraph || null,
-    function_call: functionCall,
+    function_call: functionCalls[0] || null,
+    function_calls: functionCalls,
     files: [],
   };
 }
@@ -360,9 +362,7 @@ async function callOpenAIStream(
   }
 
   let paragraph = "";
-  let functionCallName = "";
-  let functionCallArgs = "";
-  let hasMultipleToolCalls = false;
+  const toolCallAccumulators: { name: string; arguments: string }[] = [];
 
   const reader = response.body.getReader();
   let partialChunk = "";
@@ -397,17 +397,10 @@ async function callOpenAIStream(
       if (!jsonString) continue;
 
       if (jsonString.includes("[DONE]")) {
-        if (hasMultipleToolCalls) {
-          logger.warn(
-            id,
-            "Discarding additional OpenAI function call(s) from stream (only first tool_call processed)"
-          );
-        }
         return parseStreamedResponse(
           id,
           paragraph,
-          functionCallName,
-          functionCallArgs,
+          toolCallAccumulators,
           functionNames
         );
       }
@@ -435,13 +428,15 @@ async function callOpenAIStream(
       }
 
       const toolCalls = json.choices[0]?.delta?.tool_calls;
-      if (toolCalls?.length > 1 || (toolCalls?.[0]?.index && toolCalls[0].index > 0)) {
-        hasMultipleToolCalls = true;
-      }
-      const toolCall = toolCalls?.[0];
-      if (toolCall?.index === 0 || toolCall?.index === undefined) {
-        if (toolCall?.function?.name) functionCallName += toolCall.function.name;
-        if (toolCall?.function?.arguments) functionCallArgs += toolCall.function.arguments;
+      if (toolCalls) {
+        for (const toolCall of toolCalls) {
+          const idx = toolCall.index ?? 0;
+          while (toolCallAccumulators.length <= idx) {
+            toolCallAccumulators.push({ name: "", arguments: "" });
+          }
+          if (toolCall.function?.name) toolCallAccumulators[idx].name += toolCall.function.name;
+          if (toolCall.function?.arguments) toolCallAccumulators[idx].arguments += toolCall.function.arguments;
+        }
       }
 
       const text = json.choices[0]?.delta?.content;
@@ -487,30 +482,27 @@ async function callOpenAI(
 
   // Check for tool_calls (modern API) first, fall back to function_call (legacy)
   const toolCalls = choice.message?.tool_calls;
-  let functionCall: FunctionCall | null = null;
+  const functionCalls: FunctionCall[] = [];
 
   if (toolCalls?.length) {
-    functionCall = {
-      name: toolCalls[0].function.name,
-      arguments: JSON.parse(toolCalls[0].function.arguments),
-    };
-
-    if (toolCalls.length > 1) {
-      const allNames = toolCalls.map((tc: any) => tc.function.name).join(", ");
-      const discarded = toolCalls.slice(1).map((tc: any) => `tool ${tc.function.name} with args ${JSON.stringify(JSON.parse(tc.function.arguments))}`).join(", ");
-      logger.warn(id, `got ${toolCalls.length} tool calls for tools ${allNames}. using tool ${toolCalls[0].function.name} with args ${JSON.stringify(JSON.parse(toolCalls[0].function.arguments))} discarding ${discarded}`);
+    for (const tc of toolCalls) {
+      functionCalls.push({
+        name: tc.function.name,
+        arguments: JSON.parse(tc.function.arguments),
+      });
     }
   } else if (choice.function_call) {
-    functionCall = {
+    functionCalls.push({
       name: choice.function_call.name,
       arguments: JSON.parse(choice.function_call.arguments),
-    };
+    });
   }
 
   return {
     role: "assistant",
     content: choice.message.content || null,
-    function_call: functionCall,
+    function_call: functionCalls[0] || null,
+    function_calls: functionCalls,
     files: [],
   };
 }
@@ -787,16 +779,11 @@ async function callAnthropic(
     throw new Error("Missing text & functions in Anthropic API response");
   }
 
-  if (functionCalls.length > 1) {
-    const allNames = functionCalls.map((fc) => fc.name).join(", ");
-    const discarded = functionCalls.slice(1).map((fc) => `tool ${fc.name} with args ${JSON.stringify(fc.arguments)}`).join(", ");
-    logger.warn(id, `got ${functionCalls.length} tool calls for tools ${allNames}. using tool ${functionCalls[0].name} with args ${JSON.stringify(functionCalls[0].arguments)} discarding ${discarded}`);
-  }
-
   return {
     role: "assistant",
     content: textResponse,
     function_call: functionCalls[0] || null,
+    function_calls: functionCalls,
     files: [],
   };
 }
@@ -949,12 +936,6 @@ async function callGoogleAI(
     arguments: fc.args ?? {},
   }));
 
-  if (functionCalls && functionCalls.length > 1) {
-    const allNames = functionCalls.map((fc) => fc.name).join(", ");
-    const discarded = functionCalls.slice(1).map((fc) => `tool ${fc.name} with args ${JSON.stringify(fc.arguments)}`).join(", ");
-    logger.warn(id, `got ${functionCalls.length} tool calls for tools ${allNames}. using tool ${functionCalls[0].name} with args ${JSON.stringify(functionCalls[0].arguments)} discarding ${discarded}`);
-  }
-
   if (!text && !functionCalls?.length && !files.length) {
     const candidate = response.candidates?.[0];
     const finishReason = candidate?.finishReason;
@@ -992,6 +973,7 @@ async function callGoogleAI(
     content: text || null,
     files,
     function_call: functionCalls?.[0] || null,
+    function_calls: functionCalls || [],
   };
 }
 
@@ -1146,25 +1128,21 @@ async function callGroq(
     throw new Error("Missing answer in Groq API");
   }
 
-  let functionCall: FunctionCall | null = null;
+  const functionCalls: FunctionCall[] = [];
   if (answer.tool_calls?.length) {
-    const toolCall = answer.tool_calls[0];
-    functionCall = {
-      name: toolCall.function.name,
-      arguments: JSON.parse(toolCall.function.arguments),
-    };
-
-    if (answer.tool_calls.length > 1) {
-      const allNames = answer.tool_calls.map((tc: any) => tc.function.name).join(", ");
-      const discarded = answer.tool_calls.slice(1).map((tc: any) => `tool ${tc.function.name} with args ${JSON.stringify(JSON.parse(tc.function.arguments))}`).join(", ");
-      logger.warn(id, `got ${answer.tool_calls.length} tool calls for tools ${allNames}. using tool ${answer.tool_calls[0].function.name} with args ${JSON.stringify(JSON.parse(answer.tool_calls[0].function.arguments))} discarding ${discarded}`);
+    for (const tc of answer.tool_calls) {
+      functionCalls.push({
+        name: tc.function.name,
+        arguments: JSON.parse(tc.function.arguments),
+      });
     }
   }
 
   return {
     role: "assistant",
     content: answer.content || null,
-    function_call: functionCall,
+    function_call: functionCalls[0] || null,
+    function_calls: functionCalls,
     files: [],
   };
 }

@@ -141,6 +141,7 @@ export interface ParsedResponseMessage {
   role: "assistant";
   content: string | null;
   function_call: FunctionCall | null;
+  function_calls: FunctionCall[];
   files: File[];
 }
 
