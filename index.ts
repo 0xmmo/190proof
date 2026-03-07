@@ -868,9 +868,9 @@ async function prepareGoogleAIPayload(
       if (ALLOWED_IMAGE_MIME_TYPES.includes(file.mimeType)) {
         if (file.url) {
           parts.push({
-            inlineData: {
-              mimeType: "image/png",
-              data: await getNormalizedBase64PNG(file.url, file.mimeType),
+            fileData: {
+              mimeType: file.mimeType,
+              fileUri: file.url,
             },
           });
           parts.push({ text: `Image (${file.url})` });
@@ -995,7 +995,7 @@ function removeImagesFromGooglePayload(payload: GoogleAIPayload): boolean {
 
   for (const message of payload.messages) {
     message.parts = message.parts.filter((part) => {
-      if ("inlineData" in part) {
+      if ("inlineData" in part || "fileData" in part) {
         removedImages = true;
         return false;
       }

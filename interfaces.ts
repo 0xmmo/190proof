@@ -238,7 +238,14 @@ export interface GoogleAIInlineDataPart {
   };
 }
 
-export type GoogleAIPart = GoogleAITextPart | GoogleAIInlineDataPart;
+export interface GoogleAIFileDataPart {
+  fileData: {
+    mimeType: string;
+    fileUri: string;
+  };
+}
+
+export type GoogleAIPart = GoogleAITextPart | GoogleAIInlineDataPart | GoogleAIFileDataPart;
 export interface GoogleAIMessage {
   role: "user" | "model";
   parts: GoogleAIPart[];
