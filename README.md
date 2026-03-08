@@ -193,6 +193,7 @@ const response = await callWithRetries("system-message-example", payload);
 - `gemini-2.0-flash-thinking-exp-01-21`
 - `gemini-2.5-flash-preview-04-17`
 - `gemini-3-flash-preview`
+- `gemini-3.1-flash-lite-preview`
 
 ### Groq Models
 
