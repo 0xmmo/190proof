@@ -12,10 +12,10 @@ jest.setTimeout(60000); // Increase timeout to 60s
 const modelConfigs = [
   // { provider: "Groq", model: GroqModel.DEEPSEEK_R1_DISTILL_LLAMA_70B },
   { provider: "OpenAI", model: GPTModel.GPT5_MINI },
-  { provider: "Anthropic", model: ClaudeModel.SONNET_4_5 },
+  { provider: "Anthropic", model: ClaudeModel.HAIKU_4_5 },
   {
     provider: "Gemini",
-    model: GeminiModel.GEMINI_3_FLASH_PREVIEW,
+    model: GeminiModel.GEMINI_3_1_FLASH_LITE_PREVIEW,
   },
 ];
 
@@ -84,8 +84,7 @@ describe.each(modelConfigs)("$provider Model", ({ provider, model }) => {
         },
         {
           role: "user",
-          content:
-            "What is the weather in Tokyo and New York?",
+          content: "What is the weather in Tokyo and New York?",
         },
       ],
       functions: [
@@ -108,12 +107,12 @@ describe.each(modelConfigs)("$provider Model", ({ provider, model }) => {
 
     const answer = await callWithRetries(
       [provider, "parallel_functions"],
-      aiPayload
+      aiPayload,
     );
     expect(answer).toBeDefined();
     expect(answer.function_calls.length).toBeGreaterThanOrEqual(2);
-    const cityNames = answer.function_calls.map(
-      (fc) => fc.arguments.city_name?.toLowerCase()
+    const cityNames = answer.function_calls.map((fc) =>
+      fc.arguments.city_name?.toLowerCase(),
     );
     expect(cityNames).toContain("tokyo");
     expect(cityNames).toContain("new york");
@@ -190,6 +189,39 @@ describe.each(modelConfigs)("$provider Model", ({ provider, model }) => {
     expect(answer.content).toBeDefined();
   });
 
+  test("assistant message with image files in history", async () => {
+    const aiPayload: GenericPayload = {
+      model,
+      messages: [
+        {
+          role: "user",
+          content: "Generate an image of a sunset",
+        },
+        {
+          role: "assistant",
+          content: "Here is a sunset image",
+          files: [
+            {
+              mimeType: "image/png",
+              data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==",
+            },
+          ],
+        },
+        {
+          role: "user",
+          content: "Describe what you see in the image you generated",
+        },
+      ],
+    };
+
+    const answer = await callWithRetries(
+      [provider, "assistant_with_files"],
+      aiPayload,
+    );
+    expect(answer).toBeDefined();
+    expect(answer.content).toBeDefined();
+  });
+
   test("consecutive user messages", async () => {
     const aiPayload: GenericPayload = {
       model,
@@ -232,7 +264,7 @@ describe.each(modelConfigs)("$provider Model", ({ provider, model }) => {
 
     const answer = await callWithRetries(
       [provider, "image_generation"],
-      aiPayload
+      aiPayload,
     );
 
     expect(answer).toBeDefined();

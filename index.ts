@@ -61,7 +61,7 @@ async function withRetries<T>(
     retries?: number;
     baseDelayMs?: number;
     onError?: (error: any, attempt: number) => void;
-  } = {}
+  } = {},
 ): Promise<T> {
   const { retries = 5, baseDelayMs = 125, onError } = options;
 
@@ -80,7 +80,7 @@ async function withRetries<T>(
         logger.error(
           identifier,
           `Retry #${attempt} error: ${error.message}`,
-          error.response?.data || error
+          error.response?.data || error,
         );
       }
 
@@ -89,7 +89,7 @@ async function withRetries<T>(
   }
 
   const error = new Error(
-    `Failed to call ${apiName} API after ${retries} attempts`
+    `Failed to call ${apiName} API after ${retries} attempts`,
   ) as any;
   error.cause = lastError;
   throw error;
@@ -99,7 +99,7 @@ function parseStreamedResponse(
   identifier: Identifier,
   paragraph: string,
   toolCallAccumulators: { name: string; arguments: string }[],
-  allowedFunctionNames: Set<string> | null
+  allowedFunctionNames: Set<string> | null,
 ): ParsedResponseMessage {
   const functionCalls: FunctionCall[] = [];
 
@@ -108,7 +108,7 @@ function parseStreamedResponse(
 
     if (allowedFunctionNames && !allowedFunctionNames.has(acc.name)) {
       throw new Error(
-        `Stream error: received function call with unknown name: ${acc.name}`
+        `Stream error: received function call with unknown name: ${acc.name}`,
       );
     }
 
@@ -121,7 +121,7 @@ function parseStreamedResponse(
       logger.error(
         identifier,
         "Error parsing function call arguments:",
-        acc.arguments
+        acc.arguments,
       );
       throw error;
     }
@@ -131,10 +131,10 @@ function parseStreamedResponse(
     logger.error(
       identifier,
       "Stream error: received message without content or function_call:",
-      JSON.stringify({ paragraph, toolCallAccumulators })
+      JSON.stringify({ paragraph, toolCallAccumulators }),
     );
     throw new Error(
-      "Stream error: received message without content or function_call"
+      "Stream error: received message without content or function_call",
     );
   }
 
@@ -170,13 +170,13 @@ function truncatePayload(payload: OpenAIPayload): string {
       }),
     },
     null,
-    2
+    2,
   );
 }
 
 async function getNormalizedBase64PNG(
   url: string,
-  mime: string
+  mime: string,
 ): Promise<string> {
   const response = await axios.get(url, { responseType: "arraybuffer" });
 
@@ -224,7 +224,7 @@ interface OpenAIRequestConfig {
 function buildOpenAIRequestConfig(
   identifier: Identifier,
   model: string,
-  config: OpenAIConfig | undefined
+  config: OpenAIConfig | undefined,
 ): OpenAIRequestConfig {
   if (!config) {
     config = {
@@ -239,7 +239,7 @@ function buildOpenAIRequestConfig(
 
     if (!config.modelConfigMap) {
       throw new Error(
-        "OpenAI config modelConfigMap is required when using Azure OpenAI service."
+        "OpenAI config modelConfigMap is required when using Azure OpenAI service.",
       );
     }
 
@@ -278,7 +278,7 @@ function buildOpenAIRequestConfig(
 
 async function prepareOpenAIPayload(
   identifier: Identifier,
-  payload: GenericPayload
+  payload: GenericPayload,
 ): Promise<OpenAIPayload> {
   const preparedPayload: OpenAIPayload = {
     model: payload.model as GPTModel,
@@ -337,7 +337,7 @@ async function callOpenAIStream(
   id: Identifier,
   openAiPayload: OpenAIPayload,
   openAiConfig: OpenAIConfig | undefined,
-  chunkTimeoutMs: number
+  chunkTimeoutMs: number,
 ): Promise<ParsedResponseMessage> {
   const functionNames: Set<string> | null = openAiPayload.tools
     ? new Set(openAiPayload.tools.map((fn) => fn.function.name as string))
@@ -346,7 +346,7 @@ async function callOpenAIStream(
   const { endpoint, headers } = buildOpenAIRequestConfig(
     id,
     openAiPayload.model,
-    openAiConfig
+    openAiConfig,
   );
 
   const controller = new AbortController();
@@ -381,7 +381,10 @@ async function callOpenAIStream(
     clearTimeout(abortTimeout);
 
     if (done) {
-      logger.error(id, `Stream ended prematurely after ${chunkIndex + 1} chunks`);
+      logger.error(
+        id,
+        `Stream ended prematurely after ${chunkIndex + 1} chunks`,
+      );
       throw new Error("Stream error: ended prematurely");
     }
 
@@ -401,7 +404,7 @@ async function callOpenAIStream(
           id,
           paragraph,
           toolCallAccumulators,
-          functionNames
+          functionNames,
         );
       }
 
@@ -434,8 +437,10 @@ async function callOpenAIStream(
           while (toolCallAccumulators.length <= idx) {
             toolCallAccumulators.push({ name: "", arguments: "" });
           }
-          if (toolCall.function?.name) toolCallAccumulators[idx].name += toolCall.function.name;
-          if (toolCall.function?.arguments) toolCallAccumulators[idx].arguments += toolCall.function.arguments;
+          if (toolCall.function?.name)
+            toolCallAccumulators[idx].name += toolCall.function.name;
+          if (toolCall.function?.arguments)
+            toolCallAccumulators[idx].arguments += toolCall.function.arguments;
         }
       }
 
@@ -448,12 +453,12 @@ async function callOpenAIStream(
 async function callOpenAI(
   id: Identifier,
   openAiPayload: OpenAIPayload,
-  openAiConfig: OpenAIConfig | undefined
+  openAiConfig: OpenAIConfig | undefined,
 ): Promise<ParsedResponseMessage> {
   const { endpoint, headers } = buildOpenAIRequestConfig(
     id,
     openAiPayload.model,
-    openAiConfig
+    openAiConfig,
   );
 
   const response = await fetch(endpoint, {
@@ -512,13 +517,13 @@ async function callOpenAiWithRetries(
   openAiPayload: OpenAIPayload,
   openAiConfig?: OpenAIConfig,
   retries: number = 5,
-  chunkTimeoutMs: number = 15_000
+  chunkTimeoutMs: number = 15_000,
 ): Promise<ParsedResponseMessage> {
   logger.log(
     id,
     "Calling OpenAI API with retries:",
     openAiConfig?.service,
-    openAiPayload.model
+    openAiPayload.model,
   );
 
   const useStreaming =
@@ -530,7 +535,12 @@ async function callOpenAiWithRetries(
     "OpenAI",
     async () => {
       if (useStreaming) {
-        return callOpenAIStream(id, openAiPayload, openAiConfig, chunkTimeoutMs);
+        return callOpenAIStream(
+          id,
+          openAiPayload,
+          openAiConfig,
+          chunkTimeoutMs,
+        );
       } else {
         return callOpenAI(id, openAiPayload, openAiConfig);
       }
@@ -542,7 +552,7 @@ async function callOpenAiWithRetries(
         logger.error(
           id,
           `Retry #${attempt} error: ${error.message}`,
-          error.response?.data || error.data || error
+          error.response?.data || error.data || error,
         );
 
         // Remove images on content policy violation
@@ -551,13 +561,13 @@ async function callOpenAiWithRetries(
           openAiPayload.messages.forEach((message: OpenAIMessage) => {
             if (Array.isArray(message.content)) {
               message.content = message.content.filter(
-                (content) => content.type === "text"
+                (content) => content.type === "text",
               );
             }
           });
         }
       },
-    }
+    },
   );
 }
 
@@ -566,13 +576,16 @@ async function callOpenAiWithRetries(
 // ─────────────────────────────────────────────────────────────────────────────
 
 function jigAnthropicMessages(
-  messages: AnthropicAIMessage[]
+  messages: AnthropicAIMessage[],
 ): AnthropicAIMessage[] {
   let jiggedMessages = messages.slice();
 
   // Ensure first message is from user
   if (jiggedMessages[0]?.role !== "user") {
-    jiggedMessages = [{ role: "user" as const, content: "..." }, ...jiggedMessages];
+    jiggedMessages = [
+      { role: "user" as const, content: "..." },
+      ...jiggedMessages,
+    ];
   }
 
   // Group consecutive messages with the same role
@@ -614,7 +627,7 @@ function jigAnthropicMessages(
 
 async function prepareAnthropicPayload(
   _identifier: Identifier,
-  payload: GenericPayload
+  payload: GenericPayload,
 ): Promise<AnthropicAIPayload> {
   const preparedPayload: AnthropicAIPayload = {
     model: payload.model as ClaudeModel,
@@ -638,24 +651,30 @@ async function prepareAnthropicPayload(
     for (const file of message.files || []) {
       if (ALLOWED_IMAGE_MIME_TYPES.includes(file.mimeType)) {
         if (file.url) {
-          contentBlocks.push({
-            type: "image",
-            source: {
-              type: "base64",
-              media_type: "image/png",
-              data: await getNormalizedBase64PNG(file.url, file.mimeType),
-            },
-          });
+          if (message.role == "user") {
+            // anthropic assistant turns can't have images
+            contentBlocks.push({
+              type: "image",
+              source: {
+                type: "base64",
+                media_type: "image/png",
+                data: await getNormalizedBase64PNG(file.url, file.mimeType),
+              },
+            });
+          }
           contentBlocks.push({ type: "text", text: `Image (${file.url})` });
         } else if (file.data) {
-          contentBlocks.push({
-            type: "image",
-            source: {
-              type: "base64",
-              media_type: file.mimeType as any,
-              data: file.data,
-            },
-          });
+          if (message.role == "user") {
+            // anthropic assistant turns can't have images
+            contentBlocks.push({
+              type: "image",
+              source: {
+                type: "base64",
+                media_type: file.mimeType as any,
+                data: file.data,
+              },
+            });
+          }
         }
       } else if (file.url) {
         // Non-image file with URL - add text reference
@@ -678,7 +697,7 @@ async function prepareAnthropicPayload(
 async function callAnthropic(
   id: Identifier,
   payload: AnthropicAIPayload,
-  config?: AnthropicAIConfig
+  config?: AnthropicAIConfig,
 ): Promise<ParsedResponseMessage> {
   const anthropicMessages = jigAnthropicMessages(payload.messages);
   const tools = payload.functions?.map((f) => ({
@@ -706,7 +725,7 @@ async function callAnthropic(
         contentType: "application/json",
         body: JSON.stringify(bedrockPayload),
         modelId: MODEL_ID,
-      })
+      }),
     );
 
     const decodedResponseBody = new TextDecoder().decode(response.body);
@@ -731,7 +750,7 @@ async function callAnthropic(
           "anthropic-beta": "tools-2024-04-04",
         },
         timeout: 60000,
-      }
+      },
     );
     data = response.data;
   }
@@ -760,7 +779,7 @@ async function callAnthropic(
       if (!text) {
         text = answer.text.replace(
           /<thinking>|<\/thinking>|<answer>|<\/answer>/gs,
-          ""
+          "",
         );
         logger.log(id, "No text in answer, returning text within tags:", text);
       }
@@ -775,7 +794,11 @@ async function callAnthropic(
   }
 
   if (!textResponse && !functionCalls.length) {
-    logger.error(id, "Missing text & functions in Anthropic API response:", data);
+    logger.error(
+      id,
+      "Missing text & functions in Anthropic API response:",
+      data,
+    );
     throw new Error("Missing text & functions in Anthropic API response");
   }
 
@@ -792,11 +815,16 @@ async function callAnthropicWithRetries(
   id: Identifier,
   payload: AnthropicAIPayload,
   config?: AnthropicAIConfig,
-  retries: number = 5
+  retries: number = 5,
 ): Promise<ParsedResponseMessage> {
-  return withRetries(id, "Anthropic", () => callAnthropic(id, payload, config), {
-    retries,
-  });
+  return withRetries(
+    id,
+    "Anthropic",
+    () => callAnthropic(id, payload, config),
+    {
+      retries,
+    },
+  );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -808,7 +836,10 @@ function jigGoogleMessages(messages: GoogleAIMessage[]): GoogleAIMessage[] {
 
   // Ensure first message is from user
   if (jiggedMessages[0]?.role === "model") {
-    jiggedMessages = [{ role: "user" as const, parts: [{ text: "..." }] }, ...jiggedMessages];
+    jiggedMessages = [
+      { role: "user" as const, parts: [{ text: "..." }] },
+      ...jiggedMessages,
+    ];
   }
 
   // Group consecutive messages with the same role
@@ -834,7 +865,7 @@ function jigGoogleMessages(messages: GoogleAIMessage[]): GoogleAIMessage[] {
 
 async function prepareGoogleAIPayload(
   _identifier: Identifier,
-  payload: GenericPayload
+  payload: GenericPayload,
 ): Promise<GoogleAIPayload> {
   const preparedPayload: GoogleAIPayload = {
     model: payload.model as GeminiModel,
@@ -901,7 +932,7 @@ async function prepareGoogleAIPayload(
 
 async function callGoogleAI(
   id: Identifier,
-  payload: GoogleAIPayload
+  payload: GoogleAIPayload,
 ): Promise<ParsedResponseMessage> {
   const googleMessages = jigGoogleMessages(payload.messages);
   const history = googleMessages.slice(0, -1);
@@ -952,7 +983,8 @@ async function callGoogleAI(
     let errorMessage = "Missing text & functions in Google AI API response";
     if (finishReason) {
       const reasonDescriptions: Record<string, string> = {
-        MALFORMED_FUNCTION_CALL: "(Google could not generate valid function call arguments)",
+        MALFORMED_FUNCTION_CALL:
+          "(Google could not generate valid function call arguments)",
         SAFETY: "(blocked by safety filters)",
         RECITATION: "(blocked due to recitation)",
         MAX_TOKENS: "(response truncated due to max tokens)",
@@ -981,10 +1013,7 @@ async function callGoogleAI(
  * Content violation finish reasons that should trigger circuit breaker behavior.
  * These errors won't resolve with simple retries - the content itself is the problem.
  */
-const CONTENT_VIOLATION_REASONS = new Set([
-  "PROHIBITED_CONTENT",
-  "SAFETY",
-]);
+const CONTENT_VIOLATION_REASONS = new Set(["PROHIBITED_CONTENT", "SAFETY"]);
 
 /**
  * Removes inline image data from Google AI messages, preserving text content.
@@ -1014,7 +1043,7 @@ function removeImagesFromGooglePayload(payload: GoogleAIPayload): boolean {
 async function callGoogleAIWithRetries(
   id: Identifier,
   payload: GoogleAIPayload,
-  retries: number = 5
+  retries: number = 5,
 ): Promise<ParsedResponseMessage> {
   let hasTriedWithoutImages = false;
 
@@ -1029,18 +1058,31 @@ async function callGoogleAIWithRetries(
 
       if (error.safetyRatings) errorDetails.safetyRatings = error.safetyRatings;
       if (error.usageMetadata) errorDetails.usageMetadata = error.usageMetadata;
-      if (error.promptFeedback) errorDetails.promptFeedback = error.promptFeedback;
+      if (error.promptFeedback)
+        errorDetails.promptFeedback = error.promptFeedback;
       if (error.status) errorDetails.httpStatus = error.status;
       if (error.code) errorDetails.errorCode = error.code;
       if (error.details) errorDetails.errorDetails = error.details;
 
-      logger.error(id, `Retry #${attempt} error: ${error.message}`, errorDetails);
+      const fileUris = payload.messages
+        .flatMap((m) => m.parts)
+        .filter((p) => "fileData" in p)
+        .map((p) => (p as any).fileData.fileUri);
+      if (fileUris.length) errorDetails.fileUris = fileUris;
+
+      logger.error(
+        id,
+        `Retry #${attempt} error: ${error.message}`,
+        errorDetails,
+      );
 
       // Circuit breaker: detect content violations and try removing images
       // Check both finishReason (candidate-level) and promptFeedback.blockReason (prompt-level)
       const violationReason =
-        (CONTENT_VIOLATION_REASONS.has(error.finishReason) && error.finishReason) ||
-        (CONTENT_VIOLATION_REASONS.has(error.promptFeedback?.blockReason) && error.promptFeedback?.blockReason);
+        (CONTENT_VIOLATION_REASONS.has(error.finishReason) &&
+          error.finishReason) ||
+        (CONTENT_VIOLATION_REASONS.has(error.promptFeedback?.blockReason) &&
+          error.promptFeedback?.blockReason);
 
       if (violationReason) {
         if (!hasTriedWithoutImages) {
@@ -1048,7 +1090,7 @@ async function callGoogleAIWithRetries(
           if (removedImages) {
             logger.log(
               id,
-              `Circuit breaker triggered: removing images due to ${violationReason}`
+              `Circuit breaker triggered: removing images due to ${violationReason}`,
             );
             hasTriedWithoutImages = true;
             return; // Continue to next retry with images removed
@@ -1058,10 +1100,10 @@ async function callGoogleAIWithRetries(
         // If we already tried without images or there were no images, fail fast
         logger.error(
           id,
-          `Circuit breaker: failing fast due to ${violationReason} (no more fallbacks)`
+          `Circuit breaker: failing fast due to ${violationReason} (no more fallbacks)`,
         );
         const circuitBreakerError = new Error(
-          `Google AI content violation: ${violationReason}. Request cannot succeed with current content.`
+          `Google AI content violation: ${violationReason}. Request cannot succeed with current content.`,
         ) as any;
         circuitBreakerError.finishReason = error.finishReason;
         circuitBreakerError.safetyRatings = error.safetyRatings;
@@ -1078,7 +1120,7 @@ async function callGoogleAIWithRetries(
 // ─────────────────────────────────────────────────────────────────────────────
 
 function normalizeMessageContent(
-  content: AnthropicAIMessage["content"]
+  content: AnthropicAIMessage["content"],
 ): string {
   return Array.isArray(content)
     ? content
@@ -1109,7 +1151,7 @@ function prepareGroqPayload(payload: GenericPayload): GroqPayload {
 
 async function callGroq(
   id: Identifier,
-  payload: GroqPayload
+  payload: GroqPayload,
 ): Promise<ParsedResponseMessage> {
   const response = await axios.post(
     "https://api.groq.com/openai/v1/chat/completions",
@@ -1119,7 +1161,7 @@ async function callGroq(
         "content-type": "application/json",
         Authorization: `Bearer ${process.env.GROQ_API_KEY}`,
       },
-    }
+    },
   );
 
   const answer = response.data.choices[0]?.message;
@@ -1150,7 +1192,7 @@ async function callGroq(
 async function callGroqWithRetries(
   id: Identifier,
   payload: GroqPayload,
-  retries: number = 5
+  retries: number = 5,
 ): Promise<ParsedResponseMessage> {
   return withRetries(id, "Groq", () => callGroq(id, payload), { retries });
 }
@@ -1180,7 +1222,7 @@ export async function callWithRetries(
   aiPayload: GenericPayload,
   aiConfig?: OpenAIConfig | AnthropicAIConfig,
   retries: number = 5,
-  chunkTimeoutMs: number = 15_000
+  chunkTimeoutMs: number = 15_000,
 ): Promise<ParsedResponseMessage> {
   try {
     if (isAnthropicPayload(aiPayload)) {
@@ -1188,7 +1230,7 @@ export async function callWithRetries(
         id,
         await prepareAnthropicPayload(id, aiPayload),
         aiConfig as AnthropicAIConfig,
-        retries
+        retries,
       );
     }
 
@@ -1198,35 +1240,50 @@ export async function callWithRetries(
         await prepareOpenAIPayload(id, aiPayload),
         aiConfig as OpenAIConfig,
         retries,
-        chunkTimeoutMs
+        chunkTimeoutMs,
       );
     }
 
     if (isGroqPayload(aiPayload)) {
-      return await callGroqWithRetries(id, prepareGroqPayload(aiPayload), retries);
+      return await callGroqWithRetries(
+        id,
+        prepareGroqPayload(aiPayload),
+        retries,
+      );
     }
 
     if (isGoogleAIPayload(aiPayload)) {
       return await callGoogleAIWithRetries(
         id,
         await prepareGoogleAIPayload(id, aiPayload),
-        retries
+        retries,
       );
     }
 
     throw new Error("Invalid AI payload: Unknown model type.");
   } catch (error) {
     if (aiPayload.fallbackModel) {
-      logger.log(
+      logger.error(
         id,
-        `Primary model ${aiPayload.model} failed, falling back to ${aiPayload.fallbackModel}`
+        `Primary model ${aiPayload.model} failed, falling back to ${aiPayload.fallbackModel}`,
+        {
+          error: error instanceof Error ? error.message : error,
+          cause:
+            error instanceof Error && (error as any).cause instanceof Error
+              ? (error as any).cause.message
+              : undefined,
+        },
       );
       return callWithRetries(
         id,
-        { ...aiPayload, model: aiPayload.fallbackModel, fallbackModel: undefined },
+        {
+          ...aiPayload,
+          model: aiPayload.fallbackModel,
+          fallbackModel: undefined,
+        },
         aiConfig,
         retries,
-        chunkTimeoutMs
+        chunkTimeoutMs,
       );
     }
     throw error;
