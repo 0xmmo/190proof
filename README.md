@@ -245,7 +245,13 @@ interface ParsedResponseMessage {
   role: "assistant";
   content: string | null;
   function_call: FunctionCall | null;
+  function_calls: FunctionCall[];
   files: File[]; // For models that return files (e.g., image generation)
+  usage: {
+    prompt_tokens: number;
+    completion_tokens: number;
+    total_tokens: number;
+  } | null; // null when streaming
 }
 ```
 

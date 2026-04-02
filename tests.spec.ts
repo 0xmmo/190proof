@@ -10,7 +10,7 @@ import {
 jest.setTimeout(60000); // Increase timeout to 60s
 
 const modelConfigs = [
-  // { provider: "Groq", model: GroqModel.DEEPSEEK_R1_DISTILL_LLAMA_70B },
+  { provider: "Groq", model: GroqModel.QWEN3_32B },
   { provider: "OpenAI", model: GPTModel.GPT5_MINI },
   { provider: "Anthropic", model: ClaudeModel.HAIKU_4_5 },
   {
@@ -34,6 +34,13 @@ describe.each(modelConfigs)("$provider Model", ({ provider, model }) => {
     const answer = await callWithRetries([provider, "standard"], aiPayload);
     expect(answer).toBeDefined();
     expect(answer.content).toBeDefined();
+    // Usage should be populated for non-streaming calls
+    expect(answer.usage).toBeDefined();
+    if (answer.usage) {
+      expect(answer.usage.prompt_tokens).toBeGreaterThan(5);
+      expect(answer.usage.completion_tokens).toBeGreaterThan(5);
+      expect(answer.usage.total_tokens).toBeGreaterThan(10);
+    }
   });
 
   test("with functions", async () => {
