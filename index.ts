@@ -144,6 +144,7 @@ function parseStreamedResponse(
     function_call: functionCalls[0] || null,
     function_calls: functionCalls,
     files: [],
+    usage: null,
   };
 }
 
@@ -509,6 +510,13 @@ async function callOpenAI(
     function_call: functionCalls[0] || null,
     function_calls: functionCalls,
     files: [],
+    usage: data.usage
+      ? {
+          prompt_tokens: data.usage.prompt_tokens,
+          completion_tokens: data.usage.completion_tokens,
+          total_tokens: data.usage.total_tokens,
+        }
+      : null,
   };
 }
 
@@ -808,6 +816,13 @@ async function callAnthropic(
     function_call: functionCalls[0] || null,
     function_calls: functionCalls,
     files: [],
+    usage: data.usage
+      ? {
+          prompt_tokens: data.usage.input_tokens,
+          completion_tokens: data.usage.output_tokens,
+          total_tokens: data.usage.input_tokens + data.usage.output_tokens,
+        }
+      : null,
   };
 }
 
@@ -1006,6 +1021,13 @@ async function callGoogleAI(
     files,
     function_call: functionCalls?.[0] || null,
     function_calls: functionCalls || [],
+    usage: response.usageMetadata
+      ? {
+          prompt_tokens: response.usageMetadata.promptTokenCount ?? 0,
+          completion_tokens: response.usageMetadata.candidatesTokenCount ?? 0,
+          total_tokens: response.usageMetadata.totalTokenCount ?? 0,
+        }
+      : null,
   };
 }
 
@@ -1186,6 +1208,13 @@ async function callGroq(
     function_call: functionCalls[0] || null,
     function_calls: functionCalls,
     files: [],
+    usage: response.data.usage
+      ? {
+          prompt_tokens: response.data.usage.prompt_tokens,
+          completion_tokens: response.data.usage.completion_tokens,
+          total_tokens: response.data.usage.total_tokens,
+        }
+      : null,
   };
 }
 

@@ -33,6 +33,8 @@ export enum GPTModel {
 
 export enum GroqModel {
   LLAMA_3_70B_8192 = "llama3-70b-8192",
+  LLAMA_3_3_70B_VERSATILE = "llama-3.3-70b-versatile",
+  QWEN3_32B = "qwen/qwen3-32b",
   DEEPSEEK_R1_DISTILL_LLAMA_70B = "deepseek-r1-distill-llama-70b",
 }
 
@@ -144,6 +146,11 @@ export interface ParsedResponseMessage {
   function_call: FunctionCall | null;
   function_calls: FunctionCall[];
   files: File[];
+  usage: {
+    prompt_tokens: number;
+    completion_tokens: number;
+    total_tokens: number;
+  } | null;
 }
 
 export interface FunctionCall {
