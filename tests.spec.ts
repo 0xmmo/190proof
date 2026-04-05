@@ -5,6 +5,7 @@ import {
   ClaudeModel,
   GenericPayload,
   GeminiModel,
+  OpenRouterModel,
 } from "./interfaces";
 
 jest.setTimeout(60000); // Increase timeout to 60s
@@ -17,6 +18,7 @@ const modelConfigs = [
     provider: "Gemini",
     model: GeminiModel.GEMINI_3_1_FLASH_LITE_PREVIEW,
   },
+  { provider: "OpenRouter", model: OpenRouterModel.QWEN3_6_PLUS_FREE },
 ];
 
 describe.each(modelConfigs)("$provider Model", ({ provider, model }) => {

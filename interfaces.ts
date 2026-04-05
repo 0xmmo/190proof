@@ -38,6 +38,10 @@ export enum GroqModel {
   DEEPSEEK_R1_DISTILL_LLAMA_70B = "deepseek-r1-distill-llama-70b",
 }
 
+export enum OpenRouterModel {
+  QWEN3_6_PLUS_FREE = "qwen/qwen3.6-plus:free",
+}
+
 export enum GeminiModel {
   GEMINI_1_5_PRO = "gemini-1.5-pro-latest",
   GEMINI_EXP_1206 = "gemini-exp-1206",
@@ -217,6 +221,17 @@ export interface GroqPayload {
   functions?: any[]; // Deprecate this
 }
 
+export interface OpenRouterPayload {
+  model: OpenRouterModel;
+  messages: OpenAIMessage[];
+  tools?: FunctionWrapped[];
+  tool_choice?:
+    | "none"
+    | "auto"
+    | { type: "function"; function: { name: string } };
+  temperature?: number;
+}
+
 export interface OpenAIPayload {
   model: GPTModel;
   messages: OpenAIMessage[];
@@ -267,7 +282,7 @@ export interface GoogleAIPayload {
   systemInstruction?: string;
 }
 
-export type AnyModel = GPTModel | ClaudeModel | GroqModel | GeminiModel;
+export type AnyModel = GPTModel | ClaudeModel | GroqModel | GeminiModel | OpenRouterModel;
 
 export interface GenericPayload {
   model: AnyModel;

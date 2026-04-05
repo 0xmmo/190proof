@@ -1,6 +1,6 @@
 # 190proof
 
-A unified interface for interacting with multiple AI providers including **OpenAI**, **Anthropic**, **Google**, **Groq**, and **AWS Bedrock**. This package provides a consistent API for making requests to different LLM providers while handling retries, streaming, and multimodal inputs.
+A unified interface for interacting with multiple AI providers including **OpenAI**, **Anthropic**, **Google**, **Groq**, **OpenRouter**, and **AWS Bedrock**. This package provides a consistent API for making requests to different LLM providers while handling retries, streaming, and multimodal inputs.
 
 ## Features
 
@@ -49,6 +49,7 @@ import {
   ClaudeModel,
   GeminiModel,
   GroqModel,
+  OpenRouterModel,
   GenericPayload,
 } from "190proof/interfaces";
 
@@ -67,6 +68,12 @@ const geminiPayload: GenericPayload = {
 // Groq
 const groqPayload: GenericPayload = {
   model: GroqModel.LLAMA_3_70B_8192,
+  messages: [{ role: "user", content: "Hello!" }],
+};
+
+// OpenRouter
+const openRouterPayload: GenericPayload = {
+  model: OpenRouterModel.QWEN3_6_PLUS_FREE,
   messages: [{ role: "user", content: "Hello!" }],
 };
 
@@ -200,6 +207,10 @@ const response = await callWithRetries("system-message-example", payload);
 - `llama3-70b-8192`
 - `deepseek-r1-distill-llama-70b`
 
+### OpenRouter Models
+
+- `qwen/qwen3.6-plus:free`
+
 ## Environment Variables
 
 Set the following environment variables for the providers you want to use:
@@ -216,6 +227,9 @@ GEMINI_API_KEY=your-gemini-api-key
 
 # Groq
 GROQ_API_KEY=your-groq-api-key
+
+# OpenRouter
+OPENROUTER_API_KEY=your-openrouter-api-key
 
 # AWS Bedrock (for Anthropic via Bedrock)
 AWS_ACCESS_KEY_ID=your-aws-access-key
