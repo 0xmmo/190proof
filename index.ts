@@ -11,6 +11,8 @@ import {
   GenericPayload,
   GroqPayload,
   GroqModel,
+  OpenRouterPayload,
+  OpenRouterModel,
   ParsedResponseMessage,
   FunctionCall,
   AnthropicContentBlock,
@@ -39,6 +41,7 @@ export {
   GPTModel,
   GroqModel,
   GeminiModel,
+  OpenRouterModel,
   OpenAIConfig,
   FunctionDefinition,
   GenericMessage,
@@ -1227,6 +1230,85 @@ async function callGroqWithRetries(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// OPENROUTER
+// ─────────────────────────────────────────────────────────────────────────────
+
+function prepareOpenRouterPayload(payload: GenericPayload): OpenRouterPayload {
+  return {
+    model: payload.model as OpenRouterModel,
+    messages: payload.messages.map((message) => ({
+      role: message.role,
+      content: normalizeMessageContent(message.content),
+    })),
+    tools: payload.functions?.map((fn) => ({
+      type: "function",
+      function: fn,
+    })),
+    tool_choice: payload.function_call
+      ? typeof payload.function_call === "string"
+        ? payload.function_call
+        : { type: "function", function: payload.function_call }
+      : undefined,
+    temperature: payload.temperature,
+  };
+}
+
+async function callOpenRouter(
+  id: Identifier,
+  payload: OpenRouterPayload,
+): Promise<ParsedResponseMessage> {
+  const response = await axios.post(
+    "https://openrouter.ai/api/v1/chat/completions",
+    payload,
+    {
+      headers: {
+        "content-type": "application/json",
+        Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
+      },
+    },
+  );
+
+  const answer = response.data.choices[0]?.message;
+  if (!answer) {
+    logger.error(id, "Missing answer in OpenRouter API response:", response.data);
+    throw new Error("Missing answer in OpenRouter API");
+  }
+
+  const functionCalls: FunctionCall[] = [];
+  if (answer.tool_calls?.length) {
+    for (const tc of answer.tool_calls) {
+      functionCalls.push({
+        name: tc.function.name,
+        arguments: JSON.parse(tc.function.arguments),
+      });
+    }
+  }
+
+  return {
+    role: "assistant",
+    content: answer.content || null,
+    function_call: functionCalls[0] || null,
+    function_calls: functionCalls,
+    files: [],
+    usage: response.data.usage
+      ? {
+          prompt_tokens: response.data.usage.prompt_tokens,
+          completion_tokens: response.data.usage.completion_tokens,
+          total_tokens: response.data.usage.total_tokens,
+        }
+      : null,
+  };
+}
+
+async function callOpenRouterWithRetries(
+  id: Identifier,
+  payload: OpenRouterPayload,
+  retries: number = 5,
+): Promise<ParsedResponseMessage> {
+  return withRetries(id, "OpenRouter", () => callOpenRouter(id, payload), { retries });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // MAIN ENTRY POINT
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -1244,6 +1326,10 @@ function isGroqPayload(payload: GenericPayload): boolean {
 
 function isGoogleAIPayload(payload: GenericPayload): boolean {
   return Object.values(GeminiModel).includes(payload.model as GeminiModel);
+}
+
+function isOpenRouterPayload(payload: GenericPayload): boolean {
+  return Object.values(OpenRouterModel).includes(payload.model as OpenRouterModel);
 }
 
 export async function callWithRetries(
@@ -1285,6 +1371,14 @@ export async function callWithRetries(
       return await callGoogleAIWithRetries(
         id,
         await prepareGoogleAIPayload(id, aiPayload),
+        retries,
+      );
+    }
+
+    if (isOpenRouterPayload(aiPayload)) {
+      return await callOpenRouterWithRetries(
+        id,
+        prepareOpenRouterPayload(aiPayload),
         retries,
       );
     }
