@@ -12,6 +12,7 @@ Fully-local unified interface across multiple AI providers that includes:
 - 🔄 Automatic retries with configurable attempts
 - 📡 Streaming by default
 - ☁️ Cloud service providers supported (Azure, AWS Bedrock)
+- 🔌 Provider prefix strings for any model without waiting for package updates
 
 ## Installation
 
@@ -23,12 +24,13 @@ npm install 190proof
 
 ### Basic Example
 
+Use any model from any provider with the `provider:model-id` format:
+
 ```typescript
-import { callWithRetries } from "190proof";
-import { GPTModel, GenericPayload } from "190proof/interfaces";
+import { callWithRetries, GenericPayload } from "190proof";
 
 const payload: GenericPayload = {
-  model: GPTModel.GPT4O_MINI,
+  model: "openai:gpt-4o-mini",
   messages: [
     {
       role: "user",
@@ -44,36 +46,35 @@ console.log(response.content);
 ### Using Different Providers
 
 ```typescript
-import { callWithRetries } from "190proof";
-import {
-  ClaudeModel,
-  GeminiModel,
-  GroqModel,
-  OpenRouterModel,
-  GenericPayload,
-} from "190proof/interfaces";
+import { callWithRetries, GenericPayload } from "190proof";
+
+// OpenAI
+const openaiPayload: GenericPayload = {
+  model: "openai:gpt-5",
+  messages: [{ role: "user", content: "Hello!" }],
+};
 
 // Anthropic
 const claudePayload: GenericPayload = {
-  model: ClaudeModel.SONNET_4,
+  model: "anthropic:claude-sonnet-4-5",
   messages: [{ role: "user", content: "Hello!" }],
 };
 
 // Google
 const geminiPayload: GenericPayload = {
-  model: GeminiModel.GEMINI_2_0_FLASH,
+  model: "google:gemini-2.0-flash",
   messages: [{ role: "user", content: "Hello!" }],
 };
 
 // Groq
 const groqPayload: GenericPayload = {
-  model: GroqModel.LLAMA_3_70B_8192,
+  model: "groq:llama-3.3-70b-versatile",
   messages: [{ role: "user", content: "Hello!" }],
 };
 
 // OpenRouter
 const openRouterPayload: GenericPayload = {
-  model: OpenRouterModel.QWEN3_6_PLUS_FREE,
+  model: "openrouter:google/gemma-4-31b-it:free",
   messages: [{ role: "user", content: "Hello!" }],
 };
 
@@ -84,7 +85,7 @@ const response = await callWithRetries("request-id", claudePayload);
 
 ```typescript
 const payload: GenericPayload = {
-  model: GPTModel.GPT4O,
+  model: "openai:gpt-4o",
   messages: [
     {
       role: "user",
@@ -117,7 +118,7 @@ const response = await callWithRetries("function-call-example", payload);
 
 ```typescript
 const payload: GenericPayload = {
-  model: ClaudeModel.SONNET_4,
+  model: "anthropic:claude-sonnet-4-5",
   messages: [
     {
       role: "user",
@@ -139,7 +140,7 @@ const response = await callWithRetries("image-example", payload);
 
 ```typescript
 const payload: GenericPayload = {
-  model: GeminiModel.GEMINI_2_0_FLASH,
+  model: "google:gemini-2.0-flash",
   messages: [
     {
       role: "system",
@@ -155,61 +156,83 @@ const payload: GenericPayload = {
 const response = await callWithRetries("system-message-example", payload);
 ```
 
+### Inspecting Model Routing
+
+Use `parseModelString` to see how a model string will be routed:
+
+```typescript
+import { parseModelString } from "190proof";
+
+parseModelString("openai:gpt-7");
+// → { provider: "openai", modelId: "gpt-7" }
+
+parseModelString("openrouter:org/model-name:free");
+// → { provider: "openrouter", modelId: "org/model-name:free" }
+
+```
+
+## Provider Prefix Format
+
+The model string format is `provider:model-id`, where the provider prefix is one of:
+
+| Prefix | Provider |
+|---|---|
+| `openai` | OpenAI |
+| `anthropic` | Anthropic |
+| `google` | Google (Gemini) |
+| `groq` | Groq |
+| `openrouter` | OpenRouter |
+
+The prefix is stripped before sending to the API, so the model ID should be exactly what the provider expects (e.g. `"openai:gpt-4o"` sends `"gpt-4o"` to OpenAI).
+
 ## Supported Models
 
-### OpenAI Models
+These models are tested. You can use any model with the `provider:model-id` format.
 
-- `gpt-3.5-turbo-0613`
-- `gpt-3.5-turbo-16k-0613`
-- `gpt-3.5-turbo-0125`
-- `gpt-4-1106-preview`
-- `gpt-4-0125-preview`
-- `gpt-4-turbo-2024-04-09`
-- `gpt-4o`
-- `gpt-4o-mini`
-- `o1-preview`
-- `o1-mini`
-- `o3-mini`
-- `gpt-4.1`
-- `gpt-4.1-mini`
-- `gpt-4.1-nano`
-- `gpt-5`
-- `gpt-5-mini`
+### OpenAI
 
-### Anthropic Models
+- `openai:gpt-5`
+- `openai:gpt-5-mini`
+- `openai:gpt-4.1`
+- `openai:gpt-4.1-mini`
+- `openai:gpt-4.1-nano`
+- `openai:gpt-4o`
+- `openai:gpt-4o-mini`
+- `openai:o3-mini`
+- `openai:o1-preview`
+- `openai:o1-mini`
 
-- `claude-3-haiku-20240307`
-- `claude-3-sonnet-20240229`
-- `claude-3-opus-20240229`
-- `claude-3-5-haiku-20241022`
-- `claude-3-5-sonnet-20241022`
-- `claude-sonnet-4-20250514`
-- `claude-opus-4-20250514`
-- `claude-opus-4-1`
-- `claude-haiku-4-5`
-- `claude-sonnet-4-5`
-- `claude-opus-4-5`
+### Anthropic
 
-### Google Models
+- `anthropic:claude-opus-4-5`
+- `anthropic:claude-sonnet-4-5`
+- `anthropic:claude-haiku-4-5`
+- `anthropic:claude-opus-4-1`
+- `anthropic:claude-opus-4-20250514`
+- `anthropic:claude-sonnet-4-20250514`
+- `anthropic:claude-3-5-sonnet-20241022`
+- `anthropic:claude-3-5-haiku-20241022`
 
-- `gemini-1.5-pro-latest`
-- `gemini-exp-1206`
-- `gemini-2.0-flash`
-- `gemini-2.0-flash-exp-image-generation`
-- `gemini-2.0-flash-thinking-exp`
-- `gemini-2.0-flash-thinking-exp-01-21`
-- `gemini-2.5-flash-preview-04-17`
-- `gemini-3-flash-preview`
-- `gemini-3.1-flash-lite-preview`
+### Google
 
-### Groq Models
+- `google:gemini-3.1-flash-lite-preview`
+- `google:gemini-3-flash-preview`
+- `google:gemini-2.5-flash-preview-04-17`
+- `google:gemini-2.0-flash`
+- `google:gemini-2.0-flash-exp-image-generation`
+- `google:gemini-1.5-pro-latest`
 
-- `llama3-70b-8192`
-- `deepseek-r1-distill-llama-70b`
+### Groq
 
-### OpenRouter Models
+- `groq:llama-3.3-70b-versatile`
+- `groq:llama3-70b-8192`
+- `groq:qwen/qwen3-32b`
+- `groq:deepseek-r1-distill-llama-70b`
 
-- `qwen/qwen3.6-plus:free`
+### OpenRouter
+
+- `openrouter:google/gemma-4-31b-it:free`
+- `openrouter:google/gemma-4-31b-it`
 
 ## Environment Variables
 
@@ -269,6 +292,18 @@ interface ParsedResponseMessage {
 }
 ```
 
+### `parseModelString(model)`
+
+Parses a model string into its provider and model ID components.
+
+#### Parameters
+
+- `model`: `string` - A model string in `"provider:model-id"` format
+
+#### Returns
+
+`{ provider: Provider, modelId: string }`
+
 ### Configuration Options
 
 #### OpenAI Config
@@ -280,7 +315,7 @@ interface OpenAIConfig {
   baseUrl: string;
   orgId?: string;
   modelConfigMap?: Record<
-    GPTModel,
+    string,
     {
       resource: string;
       deployment: string;

@@ -1,24 +1,14 @@
 import { callWithRetries } from "./index";
-import {
-  GPTModel,
-  GroqModel,
-  ClaudeModel,
-  GenericPayload,
-  GeminiModel,
-  OpenRouterModel,
-} from "./interfaces";
+import { GenericPayload } from "./interfaces";
 
 jest.setTimeout(60000); // Increase timeout to 60s
 
 const modelConfigs = [
-  { provider: "Groq", model: GroqModel.QWEN3_32B },
-  { provider: "OpenAI", model: GPTModel.GPT5_MINI },
-  { provider: "Anthropic", model: ClaudeModel.HAIKU_4_5 },
-  {
-    provider: "Gemini",
-    model: GeminiModel.GEMINI_3_1_FLASH_LITE_PREVIEW,
-  },
-  { provider: "OpenRouter", model: OpenRouterModel.QWEN3_6_PLUS_FREE },
+  { provider: "Groq", model: "groq:qwen/qwen3-32b" },
+  { provider: "OpenAI", model: "openai:gpt-5-mini" },
+  { provider: "Anthropic", model: "anthropic:claude-haiku-4-5" },
+  { provider: "Gemini", model: "google:gemini-3.1-flash-lite-preview" },
+  { provider: "OpenRouter", model: "openrouter:google/gemma-4-31b-it" },
 ];
 
 describe.each(modelConfigs)("$provider Model", ({ provider, model }) => {
