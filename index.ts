@@ -23,6 +23,7 @@ import {
   File,
   GoogleAIMessage,
   AnyModel,
+  Provider,
 } from "./interfaces";
 import logger, { Identifier } from "./logger";
 import {
@@ -47,6 +48,7 @@ export {
   GenericMessage,
   GenericPayload,
   AnyModel,
+  Provider,
 } from "./interfaces";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -537,9 +539,11 @@ async function callOpenAiWithRetries(
     openAiPayload.model,
   );
 
+  const modelStr = openAiPayload.model as string;
   const useStreaming =
-    openAiPayload.model !== GPTModel.O1_MINI &&
-    openAiPayload.model !== GPTModel.O1_PREVIEW;
+    modelStr !== GPTModel.O1_MINI &&
+    modelStr !== GPTModel.O1_PREVIEW &&
+    !modelStr.startsWith("o1");
 
   return withRetries(
     id,
@@ -1312,24 +1316,56 @@ async function callOpenRouterWithRetries(
 // MAIN ENTRY POINT
 // ─────────────────────────────────────────────────────────────────────────────
 
-function isAnthropicPayload(payload: GenericPayload): boolean {
-  return Object.values(ClaudeModel).includes(payload.model as ClaudeModel);
-}
+const VALID_PROVIDERS: Provider[] = ["openai", "anthropic", "google", "groq", "openrouter"];
 
-function isOpenAiPayload(payload: GenericPayload): boolean {
-  return Object.values(GPTModel).includes(payload.model as GPTModel);
-}
+const ENUM_PROVIDER_MAP: { values: Set<string>; provider: Provider }[] = [
+  { values: new Set(Object.values(GPTModel)), provider: "openai" },
+  { values: new Set(Object.values(ClaudeModel)), provider: "anthropic" },
+  { values: new Set(Object.values(GeminiModel)), provider: "google" },
+  { values: new Set(Object.values(GroqModel)), provider: "groq" },
+  { values: new Set(Object.values(OpenRouterModel)), provider: "openrouter" },
+];
 
-function isGroqPayload(payload: GenericPayload): boolean {
-  return Object.values(GroqModel).includes(payload.model as GroqModel);
-}
+export function parseModelString(model: string): { provider: Provider; modelId: string } {
+  const colonIndex = model.indexOf(":");
 
-function isGoogleAIPayload(payload: GenericPayload): boolean {
-  return Object.values(GeminiModel).includes(payload.model as GeminiModel);
-}
+  if (colonIndex !== -1) {
+    const prefix = model.substring(0, colonIndex);
 
-function isOpenRouterPayload(payload: GenericPayload): boolean {
-  return Object.values(OpenRouterModel).includes(payload.model as OpenRouterModel);
+    if (VALID_PROVIDERS.includes(prefix as Provider)) {
+      const modelId = model.substring(colonIndex + 1);
+
+      if (!modelId) {
+        throw new Error(
+          `Empty model ID in model string '${model}'. Expected format: 'provider:model-id'`,
+        );
+      }
+
+      return { provider: prefix as Provider, modelId };
+    }
+
+    // Prefix isn't a known provider — fall through to enum lookup
+    // (handles model values that contain colons, e.g. OpenRouter "google/gemma-4-31b-it:free")
+  }
+
+  // Fallback: check enum values
+  for (const { values, provider } of ENUM_PROVIDER_MAP) {
+    if (values.has(model)) {
+      return { provider, modelId: model };
+    }
+  }
+
+  // If string had a colon but wasn't a known provider, give a specific error
+  if (colonIndex !== -1) {
+    const prefix = model.substring(0, colonIndex);
+    throw new Error(
+      `Unknown provider '${prefix}' in model string '${model}'. Valid providers: ${VALID_PROVIDERS.join(", ")}`,
+    );
+  }
+
+  throw new Error(
+    `Unable to determine provider for model '${model}'. Use a provider prefix (e.g. 'openai:${model}') or a known model enum value. Valid providers: ${VALID_PROVIDERS.join(", ")}`,
+  );
 }
 
 export async function callWithRetries(
@@ -1340,50 +1376,48 @@ export async function callWithRetries(
   chunkTimeoutMs: number = 15_000,
 ): Promise<ParsedResponseMessage> {
   try {
-    if (isAnthropicPayload(aiPayload)) {
-      return await callAnthropicWithRetries(
-        id,
-        await prepareAnthropicPayload(id, aiPayload),
-        aiConfig as AnthropicAIConfig,
-        retries,
-      );
-    }
+    const { provider, modelId } = parseModelString(aiPayload.model);
+    const routingPayload = { ...aiPayload, model: modelId as AnyModel };
 
-    if (isOpenAiPayload(aiPayload)) {
-      return await callOpenAiWithRetries(
-        id,
-        await prepareOpenAIPayload(id, aiPayload),
-        aiConfig as OpenAIConfig,
-        retries,
-        chunkTimeoutMs,
-      );
-    }
+    switch (provider) {
+      case "anthropic":
+        return await callAnthropicWithRetries(
+          id,
+          await prepareAnthropicPayload(id, routingPayload),
+          aiConfig as AnthropicAIConfig,
+          retries,
+        );
 
-    if (isGroqPayload(aiPayload)) {
-      return await callGroqWithRetries(
-        id,
-        prepareGroqPayload(aiPayload),
-        retries,
-      );
-    }
+      case "openai":
+        return await callOpenAiWithRetries(
+          id,
+          await prepareOpenAIPayload(id, routingPayload),
+          aiConfig as OpenAIConfig,
+          retries,
+          chunkTimeoutMs,
+        );
 
-    if (isGoogleAIPayload(aiPayload)) {
-      return await callGoogleAIWithRetries(
-        id,
-        await prepareGoogleAIPayload(id, aiPayload),
-        retries,
-      );
-    }
+      case "groq":
+        return await callGroqWithRetries(
+          id,
+          prepareGroqPayload(routingPayload),
+          retries,
+        );
 
-    if (isOpenRouterPayload(aiPayload)) {
-      return await callOpenRouterWithRetries(
-        id,
-        prepareOpenRouterPayload(aiPayload),
-        retries,
-      );
-    }
+      case "google":
+        return await callGoogleAIWithRetries(
+          id,
+          await prepareGoogleAIPayload(id, routingPayload),
+          retries,
+        );
 
-    throw new Error("Invalid AI payload: Unknown model type.");
+      case "openrouter":
+        return await callOpenRouterWithRetries(
+          id,
+          prepareOpenRouterPayload(routingPayload),
+          retries,
+        );
+    }
   } catch (error) {
     if (aiPayload.fallbackModel) {
       logger.error(

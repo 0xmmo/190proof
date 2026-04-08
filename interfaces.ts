@@ -1,3 +1,4 @@
+/** @deprecated Use provider prefix strings instead, e.g. `"anthropic:claude-sonnet-4-5"` */
 export enum ClaudeModel {
   HAIKU_3 = "claude-3-haiku-20240307",
   SONNET_3 = "claude-3-sonnet-20240229",
@@ -12,6 +13,7 @@ export enum ClaudeModel {
   OPUS_4_5 = "claude-opus-4-5",
 }
 
+/** @deprecated Use provider prefix strings instead, e.g. `"openai:gpt-4o"` */
 export enum GPTModel {
   GPT35_0613 = "gpt-3.5-turbo-0613",
   GPT35_0613_16K = "gpt-3.5-turbo-16k-0613",
@@ -31,6 +33,7 @@ export enum GPTModel {
   GPT5_MINI = "gpt-5-mini",
 }
 
+/** @deprecated Use provider prefix strings instead, e.g. `"groq:llama-3.3-70b-versatile"` */
 export enum GroqModel {
   LLAMA_3_70B_8192 = "llama3-70b-8192",
   LLAMA_3_3_70B_VERSATILE = "llama-3.3-70b-versatile",
@@ -38,10 +41,13 @@ export enum GroqModel {
   DEEPSEEK_R1_DISTILL_LLAMA_70B = "deepseek-r1-distill-llama-70b",
 }
 
+/** @deprecated Use provider prefix strings instead, e.g. `"openrouter:qwen/qwen3.6-plus:free"` */
 export enum OpenRouterModel {
-  QWEN3_6_PLUS_FREE = "qwen/qwen3.6-plus:free",
+  GEMMA_4_31B_IT_FREE = "google/gemma-4-31b-it:free",
+  GEMMA_4_31B_IT = "google/gemma-4-31b-it",
 }
 
+/** @deprecated Use provider prefix strings instead, e.g. `"google:gemini-2.0-flash"` */
 export enum GeminiModel {
   GEMINI_1_5_PRO = "gemini-1.5-pro-latest",
   GEMINI_EXP_1206 = "gemini-exp-1206",
@@ -209,7 +215,7 @@ interface FunctionWrapped {
 }
 
 export interface GroqPayload {
-  model: GroqModel;
+  model: GroqModel | string;
   messages: OpenAIMessage[];
   tools?: FunctionWrapped[];
   tool_choice?:
@@ -222,7 +228,7 @@ export interface GroqPayload {
 }
 
 export interface OpenRouterPayload {
-  model: OpenRouterModel;
+  model: OpenRouterModel | string;
   messages: OpenAIMessage[];
   tools?: FunctionWrapped[];
   tool_choice?:
@@ -233,7 +239,7 @@ export interface OpenRouterPayload {
 }
 
 export interface OpenAIPayload {
-  model: GPTModel;
+  model: GPTModel | string;
   messages: OpenAIMessage[];
   tools?: FunctionWrapped[];
   tool_choice?:
@@ -243,7 +249,7 @@ export interface OpenAIPayload {
 }
 
 export interface AnthropicAIPayload {
-  model: ClaudeModel;
+  model: ClaudeModel | string;
   messages: AnthropicAIMessage[];
   functions?: any[]; // TODO type this JSON schema
   temperature?: number;
@@ -274,7 +280,7 @@ export interface GoogleAIMessage {
   parts: GoogleAIPart[];
 }
 export interface GoogleAIPayload {
-  model: GeminiModel;
+  model: GeminiModel | string;
   messages: GoogleAIMessage[];
   tools?: {
     functionDeclarations: FunctionDefinition[];
@@ -282,7 +288,9 @@ export interface GoogleAIPayload {
   systemInstruction?: string;
 }
 
-export type AnyModel = GPTModel | ClaudeModel | GroqModel | GeminiModel | OpenRouterModel;
+export type Provider = "openai" | "anthropic" | "google" | "groq" | "openrouter";
+
+export type AnyModel = GPTModel | ClaudeModel | GroqModel | GeminiModel | OpenRouterModel | (string & {});
 
 export interface GenericPayload {
   model: AnyModel;
