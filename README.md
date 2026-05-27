@@ -335,11 +335,18 @@ interface OpenAIConfig {
 To talk to an OpenAI-compatible server instead of OpenAI itself:
 
 ```typescript
-await complete(payload, {
-  service: "openai",
-  apiKey: process.env.SOME_SERVER_API_KEY,
-  baseUrl: "https://your-proxy.example.com/v1",
-});
+await callWithRetries(
+  "my-identifier",
+  {
+    model: "openai:gpt-4o-mini",
+    messages: [{ role: "user", content: "hi" }],
+  },
+  {
+    service: "openai",
+    apiKey: process.env.SOME_SERVER_API_KEY,
+    baseUrl: "https://your-proxy.example.com/v1",
+  },
+);
 ```
 
 #### Anthropic Config
