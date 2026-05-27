@@ -1,17 +1,52 @@
 import { callWithRetries } from "./index";
-import { GenericPayload } from "./interfaces";
+import { AnthropicAIConfig, GenericPayload, OpenAIConfig } from "./interfaces";
 
 jest.setTimeout(60000); // Increase timeout to 60s
 
-const modelConfigs = [
+type ModelConfig = {
+  provider: string;
+  model: string;
+  /**
+   * Optional service config to pass through to callWithRetries. Use for
+   * OpenAI-compatible servers that need a custom apiKey/baseUrl.
+   */
+  config?: OpenAIConfig | AnthropicAIConfig;
+  /** Backend doesn't proxy OpenAI-style function/tool calls. */
+  skipFunctions?: boolean;
+};
+
+const modelConfigs: ModelConfig[] = [
   { provider: "Groq", model: "groq:qwen/qwen3-32b" },
   { provider: "OpenAI", model: "openai:gpt-5-mini" },
   { provider: "Anthropic", model: "anthropic:claude-haiku-4-5" },
   { provider: "Gemini", model: "google:gemini-3.1-flash-lite-preview" },
   { provider: "OpenRouter", model: "openrouter:google/gemma-4-31b-it" },
+  // codex-server (OpenAI-compatible facade over OpenAI's codex CLI).
+  // Skipped automatically if CODEX_SERVER_API_KEY isn't set.
+  ...(process.env.CODEX_SERVER_API_KEY
+    ? [
+        {
+          provider: "codex-server (openai baseUrl)",
+          model: "openai:codex",
+          config: {
+            service: "openai" as const,
+            apiKey: process.env.CODEX_SERVER_API_KEY,
+            baseUrl:
+              process.env.CODEX_SERVER_BASE_URL ??
+              "https://codex-server-mo.fly.dev/v1",
+          },
+          // codex-server doesn't proxy client-defined tools (the agent has
+          // its own built-in file/shell tools that fire server-side).
+          skipFunctions: true,
+        },
+      ]
+    : []),
 ];
 
-describe.each(modelConfigs)("$provider Model", ({ provider, model }) => {
+describe.each(modelConfigs)(
+  "$provider Model",
+  ({ provider, model, config, skipFunctions }) => {
+    const itIfFunctions = skipFunctions ? test.skip : test;
   test("standard query", async () => {
     const aiPayload: GenericPayload = {
       model,
@@ -23,7 +58,11 @@ describe.each(modelConfigs)("$provider Model", ({ provider, model }) => {
       ],
     };
 
-    const answer = await callWithRetries([provider, "standard"], aiPayload);
+    const answer = await callWithRetries(
+      [provider, "standard"],
+      aiPayload,
+      config,
+    );
     expect(answer).toBeDefined();
     expect(answer.content).toBeDefined();
     // Usage should be populated for non-streaming calls
@@ -35,7 +74,7 @@ describe.each(modelConfigs)("$provider Model", ({ provider, model }) => {
     }
   });
 
-  test("with functions", async () => {
+  itIfFunctions("with functions", async () => {
     const aiPayload: GenericPayload = {
       model,
       messages: [
@@ -62,7 +101,11 @@ describe.each(modelConfigs)("$provider Model", ({ provider, model }) => {
       ],
     };
 
-    const answer = await callWithRetries([provider, "functions"], aiPayload);
+    const answer = await callWithRetries(
+      [provider, "functions"],
+      aiPayload,
+      config,
+    );
     expect(answer).toBeDefined();
     expect(answer.function_call).toBeDefined();
     expect(answer.function_call?.name).toEqual("get_weather");
@@ -72,7 +115,7 @@ describe.each(modelConfigs)("$provider Model", ({ provider, model }) => {
     expect(answer.function_calls[0].name).toEqual("get_weather");
   });
 
-  test("with parallel function calls", async () => {
+  itIfFunctions("with parallel function calls", async () => {
     const aiPayload: GenericPayload = {
       model,
       messages: [
@@ -107,6 +150,7 @@ describe.each(modelConfigs)("$provider Model", ({ provider, model }) => {
     const answer = await callWithRetries(
       [provider, "parallel_functions"],
       aiPayload,
+      config,
     );
     expect(answer).toBeDefined();
     expect(answer.function_calls.length).toBeGreaterThanOrEqual(2);
@@ -136,7 +180,11 @@ describe.each(modelConfigs)("$provider Model", ({ provider, model }) => {
       ],
     };
 
-    const answer = await callWithRetries([provider, "files"], aiPayload);
+    const answer = await callWithRetries(
+      [provider, "files"],
+      aiPayload,
+      config,
+    );
     expect(answer.content?.toLowerCase()).toContain("fiddle");
   });
 
@@ -155,7 +203,11 @@ describe.each(modelConfigs)("$provider Model", ({ provider, model }) => {
       ],
     };
 
-    const answer = await callWithRetries([provider, "system"], aiPayload);
+    const answer = await callWithRetries(
+      [provider, "system"],
+      aiPayload,
+      config,
+    );
     expect(answer.content).toBeDefined();
     expect(answer.content).toContain("HAHAHAHA");
   });
@@ -183,7 +235,11 @@ describe.each(modelConfigs)("$provider Model", ({ provider, model }) => {
       ],
     };
 
-    const answer = await callWithRetries([provider, "history"], aiPayload);
+    const answer = await callWithRetries(
+      [provider, "history"],
+      aiPayload,
+      config,
+    );
     expect(answer).toBeDefined();
     expect(answer.content).toBeDefined();
   });
@@ -216,6 +272,7 @@ describe.each(modelConfigs)("$provider Model", ({ provider, model }) => {
     const answer = await callWithRetries(
       [provider, "assistant_with_files"],
       aiPayload,
+      config,
     );
     expect(answer).toBeDefined();
     expect(answer.content).toBeDefined();
@@ -244,7 +301,11 @@ describe.each(modelConfigs)("$provider Model", ({ provider, model }) => {
       ],
     };
 
-    const answer = await callWithRetries([provider, "context"], aiPayload);
+    const answer = await callWithRetries(
+      [provider, "context"],
+      aiPayload,
+      config,
+    );
     expect(answer).toBeDefined();
     expect(answer.content).toBeDefined();
     expect(answer.content?.toLowerCase()).toContain("green");
@@ -264,6 +325,7 @@ describe.each(modelConfigs)("$provider Model", ({ provider, model }) => {
     const answer = await callWithRetries(
       [provider, "image_generation"],
       aiPayload,
+      config,
     );
 
     expect(answer).toBeDefined();
