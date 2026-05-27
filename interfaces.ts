@@ -185,7 +185,13 @@ export interface FunctionCall {
 export interface OpenAIConfig {
   service: "azure" | "openai";
   apiKey: string;
-  baseUrl: string;
+  /**
+   * Override the base URL for the OpenAI service (e.g. an OpenAI-compatible
+   * proxy or self-hosted endpoint). The path `/chat/completions` is appended.
+   * Ignored when `service === "azure"` (use `modelConfigMap` instead).
+   * Defaults to `https://api.openai.com/v1`.
+   */
+  baseUrl?: string;
   orgId?: string;
   modelConfigMap?: Record<
     GPTModel,
