@@ -312,7 +312,12 @@ Parses a model string into its provider and model ID components.
 interface OpenAIConfig {
   service: "azure" | "openai";
   apiKey: string;
-  baseUrl: string;
+  /**
+   * Optional base URL. Defaults to `https://api.openai.com/v1`. Set to point
+   * at any OpenAI-compatible endpoint (e.g. a self-hosted proxy). The path
+   * `/chat/completions` is appended automatically. Ignored for Azure.
+   */
+  baseUrl?: string;
   orgId?: string;
   modelConfigMap?: Record<
     string,
@@ -325,6 +330,16 @@ interface OpenAIConfig {
     }
   >;
 }
+```
+
+To talk to an OpenAI-compatible server instead of OpenAI itself:
+
+```typescript
+await complete(payload, {
+  service: "openai",
+  apiKey: process.env.SOME_SERVER_API_KEY,
+  baseUrl: "https://your-proxy.example.com/v1",
+});
 ```
 
 #### Anthropic Config

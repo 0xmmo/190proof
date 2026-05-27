@@ -266,14 +266,18 @@ function buildOpenAIRequestConfig(
     };
   }
 
-  // Default: OpenAI
+  // Default: OpenAI (or any OpenAI-compatible server via config.baseUrl)
   logger.log(identifier, "Using OpenAI service:", model);
   if (config.orgId) {
     logger.log(identifier, "Using orgId:", config.orgId);
   }
 
+  const base = (config.baseUrl?.trim() || "https://api.openai.com/v1").replace(
+    /\/$/,
+    "",
+  );
   return {
-    endpoint: "https://api.openai.com/v1/chat/completions",
+    endpoint: `${base}/chat/completions`,
     headers: {
       "Content-Type": "application/json",
       Authorization: `Bearer ${config.apiKey}`,
