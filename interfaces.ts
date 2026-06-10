@@ -160,6 +160,8 @@ export interface ParsedResponseMessage {
     prompt_tokens: number;
     completion_tokens: number;
     total_tokens: number;
+    /** Prompt tokens served from the provider's cache (subset of prompt_tokens). */
+    cached_tokens?: number;
   } | null;
 }
 
@@ -318,5 +320,8 @@ export interface OpenAIBody {
     completion_tokens: number;
     prompt_tokens: number;
     total_tokens: number;
+    prompt_tokens_details?: {
+      cached_tokens?: number;
+    };
   };
 }

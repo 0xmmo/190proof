@@ -524,6 +524,7 @@ async function callOpenAI(
           prompt_tokens: data.usage.prompt_tokens,
           completion_tokens: data.usage.completion_tokens,
           total_tokens: data.usage.total_tokens,
+          cached_tokens: data.usage.prompt_tokens_details?.cached_tokens ?? 0,
         }
       : null,
   };
@@ -832,6 +833,7 @@ async function callAnthropic(
           prompt_tokens: data.usage.input_tokens,
           completion_tokens: data.usage.output_tokens,
           total_tokens: data.usage.input_tokens + data.usage.output_tokens,
+          cached_tokens: data.usage.cache_read_input_tokens ?? 0,
         }
       : null,
   };
@@ -1037,6 +1039,7 @@ async function callGoogleAI(
           prompt_tokens: response.usageMetadata.promptTokenCount ?? 0,
           completion_tokens: response.usageMetadata.candidatesTokenCount ?? 0,
           total_tokens: response.usageMetadata.totalTokenCount ?? 0,
+          cached_tokens: response.usageMetadata.cachedContentTokenCount ?? 0,
         }
       : null,
   };
@@ -1224,6 +1227,8 @@ async function callGroq(
           prompt_tokens: response.data.usage.prompt_tokens,
           completion_tokens: response.data.usage.completion_tokens,
           total_tokens: response.data.usage.total_tokens,
+          cached_tokens:
+            response.data.usage.prompt_tokens_details?.cached_tokens ?? 0,
         }
       : null,
   };
@@ -1303,6 +1308,8 @@ async function callOpenRouter(
           prompt_tokens: response.data.usage.prompt_tokens,
           completion_tokens: response.data.usage.completion_tokens,
           total_tokens: response.data.usage.total_tokens,
+          cached_tokens:
+            response.data.usage.prompt_tokens_details?.cached_tokens ?? 0,
         }
       : null,
   };
