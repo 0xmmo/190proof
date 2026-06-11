@@ -724,27 +724,7 @@ async function callAnthropic(
     ...f,
     input_schema: f.parameters,
     parameters: undefined,
-  })) as Record<string, any>[] | undefined;
-
-  // Prompt caching: tools and system form the stable prompt prefix, so mark
-  // cache breakpoints on the last tool and on the system block. Anthropic
-  // ignores breakpoints below the model's minimum cacheable length, so this
-  // is safe for small prompts.
-  if (tools?.length) {
-    tools[tools.length - 1] = {
-      ...tools[tools.length - 1],
-      cache_control: { type: "ephemeral" },
-    };
-  }
-  const system = payload.system
-    ? [
-        {
-          type: "text",
-          text: payload.system,
-          cache_control: { type: "ephemeral" },
-        },
-      ]
-    : undefined;
+  }));
 
   let data;
 
@@ -757,8 +737,7 @@ async function callAnthropic(
       anthropic_version: "bedrock-2023-05-31",
       max_tokens: 4096,
       messages: anthropicMessages,
-      // The pinned Bedrock model predates prompt caching; strip breakpoints
-      tools: tools?.map(({ cache_control, ...t }) => t),
+      tools,
     };
 
     const response = await client.send(
@@ -773,14 +752,27 @@ async function callAnthropic(
     data = JSON.parse(decodedResponseBody);
   } else {
     // Default: Anthropic API
+    // Prompt caching: mark a breakpoint on the last tool only. Tool schemas
+    // are fully static and identical across users, so that span gets real
+    // cache reads; the system prompt is left uncached because callers embed
+    // per-user / per-minute content in it, and a breakpoint after a volatile
+    // span pays 1.25x cache writes with near-zero reads. Anthropic ignores
+    // breakpoints below the model's minimum cacheable length, so small tool
+    // sets are a safe no-op.
+    const cachedTools = tools?.length
+      ? [
+          ...tools.slice(0, -1),
+          { ...tools[tools.length - 1], cache_control: { type: "ephemeral" } },
+        ]
+      : tools;
     const response = await axios.post(
       "https://api.anthropic.com/v1/messages",
       {
         model: payload.model,
         messages: anthropicMessages,
-        tools,
+        tools: cachedTools,
         temperature: payload.temperature,
-        system,
+        system: payload.system,
         max_tokens: 4096,
       },
       {
@@ -843,28 +835,29 @@ async function callAnthropic(
     throw new Error("Missing text & functions in Anthropic API response");
   }
 
+  // Anthropic's input_tokens EXCLUDES cache reads/writes; fold them back in
+  // so prompt_tokens means "all input tokens" like OpenAI, where
+  // cached_tokens is a subset of prompt_tokens.
+  let usage: ParsedResponseMessage["usage"] = null;
+  if (data.usage) {
+    const cacheRead = data.usage.cache_read_input_tokens ?? 0;
+    const cacheWrite = data.usage.cache_creation_input_tokens ?? 0;
+    const promptTokens = data.usage.input_tokens + cacheRead + cacheWrite;
+    usage = {
+      prompt_tokens: promptTokens,
+      completion_tokens: data.usage.output_tokens,
+      total_tokens: promptTokens + data.usage.output_tokens,
+      cached_tokens: cacheRead,
+    };
+  }
+
   return {
     role: "assistant",
     content: textResponse,
     function_call: functionCalls[0] || null,
     function_calls: functionCalls,
     files: [],
-    usage: data.usage
-      ? (() => {
-          // Anthropic's input_tokens EXCLUDES cache reads/writes; fold them
-          // back in so prompt_tokens means "all input tokens" like OpenAI,
-          // where cached_tokens is a subset of prompt_tokens.
-          const cacheRead = data.usage.cache_read_input_tokens ?? 0;
-          const cacheWrite = data.usage.cache_creation_input_tokens ?? 0;
-          const promptTokens = data.usage.input_tokens + cacheRead + cacheWrite;
-          return {
-            prompt_tokens: promptTokens,
-            completion_tokens: data.usage.output_tokens,
-            total_tokens: promptTokens + data.usage.output_tokens,
-            cached_tokens: cacheRead,
-          };
-        })()
-      : null,
+    usage,
   };
 }
 
