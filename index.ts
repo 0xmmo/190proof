@@ -724,7 +724,27 @@ async function callAnthropic(
     ...f,
     input_schema: f.parameters,
     parameters: undefined,
-  }));
+  })) as Record<string, any>[] | undefined;
+
+  // Prompt caching: tools and system form the stable prompt prefix, so mark
+  // cache breakpoints on the last tool and on the system block. Anthropic
+  // ignores breakpoints below the model's minimum cacheable length, so this
+  // is safe for small prompts.
+  if (tools?.length) {
+    tools[tools.length - 1] = {
+      ...tools[tools.length - 1],
+      cache_control: { type: "ephemeral" },
+    };
+  }
+  const system = payload.system
+    ? [
+        {
+          type: "text",
+          text: payload.system,
+          cache_control: { type: "ephemeral" },
+        },
+      ]
+    : undefined;
 
   let data;
 
@@ -737,7 +757,8 @@ async function callAnthropic(
       anthropic_version: "bedrock-2023-05-31",
       max_tokens: 4096,
       messages: anthropicMessages,
-      tools,
+      // The pinned Bedrock model predates prompt caching; strip breakpoints
+      tools: tools?.map(({ cache_control, ...t }) => t),
     };
 
     const response = await client.send(
@@ -759,7 +780,7 @@ async function callAnthropic(
         messages: anthropicMessages,
         tools,
         temperature: payload.temperature,
-        system: payload.system,
+        system,
         max_tokens: 4096,
       },
       {
@@ -829,12 +850,20 @@ async function callAnthropic(
     function_calls: functionCalls,
     files: [],
     usage: data.usage
-      ? {
-          prompt_tokens: data.usage.input_tokens,
-          completion_tokens: data.usage.output_tokens,
-          total_tokens: data.usage.input_tokens + data.usage.output_tokens,
-          cached_tokens: data.usage.cache_read_input_tokens ?? 0,
-        }
+      ? (() => {
+          // Anthropic's input_tokens EXCLUDES cache reads/writes; fold them
+          // back in so prompt_tokens means "all input tokens" like OpenAI,
+          // where cached_tokens is a subset of prompt_tokens.
+          const cacheRead = data.usage.cache_read_input_tokens ?? 0;
+          const cacheWrite = data.usage.cache_creation_input_tokens ?? 0;
+          const promptTokens = data.usage.input_tokens + cacheRead + cacheWrite;
+          return {
+            prompt_tokens: promptTokens,
+            completion_tokens: data.usage.output_tokens,
+            total_tokens: promptTokens + data.usage.output_tokens,
+            cached_tokens: cacheRead,
+          };
+        })()
       : null,
   };
 }
