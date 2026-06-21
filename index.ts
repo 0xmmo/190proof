@@ -513,6 +513,20 @@ async function callOpenAI(
     });
   }
 
+  // An empty 200 (no content, no tool call) is not a usable answer — throw so
+  // withRetries retries and callWithRetries can fall back. (Mirrors the
+  // streaming path's guard in parseStreamedResponse.)
+  if (!choice.message?.content && !functionCalls.length) {
+    logger.error(
+      id,
+      "OpenAI: received message without content or function_call:",
+      JSON.stringify(data),
+    );
+    throw new Error(
+      "OpenAI: received message without content or function_call",
+    );
+  }
+
   return {
     role: "assistant",
     content: choice.message.content || null,
@@ -1261,6 +1275,20 @@ async function callGroq(
     }
   }
 
+  // An empty 200 (no content, no tool call) is not a usable answer — throw so
+  // withRetries retries and callWithRetries can fall back. (Mirrors the
+  // streaming path's guard in parseStreamedResponse.)
+  if (!answer.content && !functionCalls.length) {
+    logger.error(
+      id,
+      "Groq: received message without content or function_call:",
+      JSON.stringify(response.data),
+    );
+    throw new Error(
+      "Groq: received message without content or function_call",
+    );
+  }
+
   return {
     role: "assistant",
     content: answer.content || null,
@@ -1340,6 +1368,22 @@ async function callOpenRouter(
         arguments: JSON.parse(tc.function.arguments),
       });
     }
+  }
+
+  // Reasoning models (e.g. deepseek) can return a completion whose output went
+  // entirely to the (discarded) `reasoning` channel, leaving content empty. An
+  // empty 200 is not a usable answer — throw so withRetries retries this model
+  // and, on exhaustion, callWithRetries falls back to fallbackModel. (Mirrors
+  // the streaming path's guard in parseStreamedResponse.)
+  if (!answer.content && !functionCalls.length) {
+    logger.error(
+      id,
+      "OpenRouter: received message without content or function_call:",
+      JSON.stringify(response.data),
+    );
+    throw new Error(
+      "OpenRouter: received message without content or function_call",
+    );
   }
 
   return {
