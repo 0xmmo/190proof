@@ -1134,6 +1134,29 @@ async function callGoogleAIWithRetries(
         errorDetails,
       );
 
+      // Circuit breaker: Google's fetcher couldn't pull our image URL(s). We pass
+      // images as fileData.fileUri, but arbitrary (non-Files-API) URLs are only
+      // best-effort for Gemini, so this 400 is episodic and retrying the same URL
+      // almost never recovers within a request. Fail fast so the caller's
+      // fallbackModel (whose adapter inlines the image bytes) takes over instead of
+      // burning all retries first. Unlike the content-violation path we do NOT strip
+      // images — the fallback model should still see them.
+      if (
+        typeof error?.message === "string" &&
+        error.message.includes("Cannot fetch content from the provided URL")
+      ) {
+        logger.error(
+          id,
+          "Circuit breaker: Google could not fetch image URL(s); failing over (no more Google retries)",
+        );
+        const fetchError = new Error(
+          "Google AI could not fetch the provided image URL(s).",
+        ) as any;
+        fetchError.cause = error;
+        fetchError.googleFetchFailure = true;
+        throw fetchError;
+      }
+
       // Circuit breaker: detect content violations and try removing images
       // Check both finishReason (candidate-level) and promptFeedback.blockReason (prompt-level)
       const violationReason =
