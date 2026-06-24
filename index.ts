@@ -32,7 +32,6 @@ import {
 } from "@aws-sdk/client-bedrock-runtime";
 import axios from "axios";
 import { isHeicImage, timeout } from "./utils";
-import { GoogleGenAI } from "@google/genai";
 
 const sharp = require("sharp");
 const decode = require("heic-decode");
@@ -45,8 +44,12 @@ export {
   OpenRouterModel,
   OpenAIConfig,
   FunctionDefinition,
+  FunctionCall,
   GenericMessage,
   GenericPayload,
+  ToolResult,
+  ParsedResponseMessage,
+  OpenRouterProviderPreferences,
   AnyModel,
   Provider,
 } from "./interfaces";
@@ -103,12 +106,14 @@ async function withRetries<T>(
 function parseStreamedResponse(
   identifier: Identifier,
   paragraph: string,
-  toolCallAccumulators: { name: string; arguments: string }[],
+  toolCallAccumulators: { id?: string; name: string; arguments: string }[],
   allowedFunctionNames: Set<string> | null,
+  reasoning?: string,
 ): ParsedResponseMessage {
   const functionCalls: FunctionCall[] = [];
 
-  for (const acc of toolCallAccumulators) {
+  for (let i = 0; i < toolCallAccumulators.length; i++) {
+    const acc = toolCallAccumulators[i];
     if (!acc.name || !acc.arguments) continue;
 
     if (allowedFunctionNames && !allowedFunctionNames.has(acc.name)) {
@@ -119,6 +124,7 @@ function parseStreamedResponse(
 
     try {
       functionCalls.push({
+        id: acc.id || `call_${i}`,
         name: acc.name,
         arguments: JSON.parse(acc.arguments),
       });
@@ -149,6 +155,7 @@ function parseStreamedResponse(
     function_call: functionCalls[0] || null,
     function_calls: functionCalls,
     files: [],
+    reasoning: reasoning || undefined,
     usage: null,
   };
 }
@@ -305,6 +312,18 @@ async function prepareOpenAIPayload(
   };
 
   for (const message of payload.messages) {
+    // role:"tool" → one OpenAI tool message per result (parallel calls expand).
+    if (message.role === "tool") {
+      for (const tr of message.toolResults || []) {
+        preparedPayload.messages.push({
+          role: "tool",
+          tool_call_id: tr.toolCallId,
+          content: tr.content,
+        });
+      }
+      continue;
+    }
+
     const contentBlocks: OpenAIContentBlock[] = [];
 
     if (message.content) {
@@ -334,10 +353,26 @@ async function prepareOpenAIPayload(
       }
     }
 
-    preparedPayload.messages.push({
+    const outMessage: OpenAIMessage = {
       role: message.role,
-      content: contentBlocks,
-    });
+      // OpenAI wants null (not []) content on a tool-call-only assistant turn.
+      content: contentBlocks.length ? contentBlocks : null,
+    };
+    if (message.functionCalls?.length) {
+      outMessage.tool_calls = message.functionCalls.map((fc, i) => ({
+        id: fc.id ?? `call_${i}`,
+        type: "function" as const,
+        function: {
+          name: fc.name,
+          arguments: JSON.stringify(fc.arguments),
+        },
+      }));
+    }
+    // Reasoning passthrough — only when the caller supplied it (never injected).
+    if (message.reasoning) outMessage.reasoning = message.reasoning;
+    if (message.reasoningDetails)
+      outMessage.reasoning_details = message.reasoningDetails;
+    preparedPayload.messages.push(outMessage);
   }
 
   return preparedPayload;
@@ -372,7 +407,9 @@ async function callOpenAIStream(
   }
 
   let paragraph = "";
-  const toolCallAccumulators: { name: string; arguments: string }[] = [];
+  let reasoning = "";
+  const toolCallAccumulators: { id?: string; name: string; arguments: string }[] =
+    [];
 
   const reader = response.body.getReader();
   let partialChunk = "";
@@ -415,6 +452,7 @@ async function callOpenAIStream(
           paragraph,
           toolCallAccumulators,
           functionNames,
+          reasoning,
         );
       }
 
@@ -447,6 +485,8 @@ async function callOpenAIStream(
           while (toolCallAccumulators.length <= idx) {
             toolCallAccumulators.push({ name: "", arguments: "" });
           }
+          // The id arrives on the first fragment of each call.
+          if (toolCall.id) toolCallAccumulators[idx].id = toolCall.id;
           if (toolCall.function?.name)
             toolCallAccumulators[idx].name += toolCall.function.name;
           if (toolCall.function?.arguments)
@@ -456,6 +496,11 @@ async function callOpenAIStream(
 
       const text = json.choices[0]?.delta?.content;
       if (text) paragraph += text;
+
+      // Reasoning models (OpenRouter/OAI-compatible) stream a parallel
+      // `reasoning` channel; accumulate it so callers can round-trip it.
+      const reasoningDelta = json.choices[0]?.delta?.reasoning;
+      if (reasoningDelta) reasoning += reasoningDelta;
     }
   }
 }
@@ -500,14 +545,17 @@ async function callOpenAI(
   const functionCalls: FunctionCall[] = [];
 
   if (toolCalls?.length) {
-    for (const tc of toolCalls) {
+    for (let i = 0; i < toolCalls.length; i++) {
+      const tc = toolCalls[i];
       functionCalls.push({
+        id: tc.id ?? `call_${i}`,
         name: tc.function.name,
         arguments: JSON.parse(tc.function.arguments),
       });
     }
   } else if (choice.function_call) {
     functionCalls.push({
+      id: "call_0",
       name: choice.function_call.name,
       arguments: JSON.parse(choice.function_call.arguments),
     });
@@ -533,6 +581,8 @@ async function callOpenAI(
     function_call: functionCalls[0] || null,
     function_calls: functionCalls,
     files: [],
+    reasoning: choice.message?.reasoning ?? undefined,
+    reasoningDetails: choice.message?.reasoning_details ?? undefined,
     usage: data.usage
       ? {
           prompt_tokens: data.usage.prompt_tokens,
@@ -612,6 +662,10 @@ async function callOpenAiWithRetries(
 function jigAnthropicMessages(
   messages: AnthropicAIMessage[],
 ): AnthropicAIMessage[] {
+  const hasToolBlock = (content: AnthropicAIMessage["content"]) =>
+    Array.isArray(content) &&
+    content.some((b) => b.type === "tool_use" || b.type === "tool_result");
+
   let jiggedMessages = messages.slice();
 
   // Ensure first message is from user
@@ -635,11 +689,15 @@ function jigAnthropicMessages(
         ? message.content
         : [{ type: "text" as const, text: message.content }];
 
-      lastMessage.content = [
-        ...lastContent,
-        { type: "text", text: "\n\n---\n\n" },
-        ...newContent,
-      ];
+      // Never inject a text separator into a turn carrying tool_use/tool_result
+      // blocks — it would sit between a tool_use and its result and break
+      // Anthropic's pairing requirement.
+      const separator: AnthropicContentBlock[] =
+        hasToolBlock(lastMessage.content) || hasToolBlock(message.content)
+          ? []
+          : [{ type: "text", text: "\n\n---\n\n" }];
+
+      lastMessage.content = [...lastContent, ...separator, ...newContent];
       return acc;
     }
 
@@ -651,8 +709,10 @@ function jigAnthropicMessages(
     return [...acc, message];
   }, [] as AnthropicAIMessage[]);
 
-  // Ensure last message is from user
-  if (jiggedMessages[jiggedMessages.length - 1]?.role === "assistant") {
+  // Ensure last message is from user — but never append a placeholder after an
+  // unanswered tool_use turn (a text-only user can't satisfy it).
+  const last = jiggedMessages[jiggedMessages.length - 1];
+  if (last?.role === "assistant" && !hasToolBlock(last.content)) {
     jiggedMessages.push({ role: "user", content: "..." });
   }
 
@@ -673,6 +733,20 @@ async function prepareAnthropicPayload(
   for (const message of payload.messages) {
     if (message.role === "system") {
       preparedPayload.system = message.content;
+      continue;
+    }
+
+    // role:"tool" → a user message carrying tool_result blocks (parallel
+    // results share one message, matching Anthropic's expected shape).
+    if (message.role === "tool") {
+      preparedPayload.messages.push({
+        role: "user",
+        content: (message.toolResults || []).map((tr) => ({
+          type: "tool_result" as const,
+          tool_use_id: tr.toolCallId,
+          content: tr.content,
+        })),
+      });
       continue;
     }
 
@@ -719,9 +793,24 @@ async function prepareAnthropicPayload(
       }
     }
 
+    // Thinking blocks (if the caller echoes them) must lead an assistant turn,
+    // before text; tool_use blocks come last.
+    const leadingBlocks: AnthropicContentBlock[] =
+      message.role === "assistant" && Array.isArray(message.reasoningDetails)
+        ? message.reasoningDetails
+        : [];
+    const toolUseBlocks: AnthropicContentBlock[] = (
+      message.functionCalls || []
+    ).map((fc, i) => ({
+      type: "tool_use" as const,
+      id: fc.id ?? `call_${i}`,
+      name: fc.name,
+      input: fc.arguments,
+    }));
+
     preparedPayload.messages.push({
       role: message.role,
-      content: contentBlocks,
+      content: [...leadingBlocks, ...contentBlocks, ...toolUseBlocks],
     });
   }
 
@@ -810,6 +899,10 @@ async function callAnthropic(
 
   let textResponse = "";
   const functionCalls: FunctionCall[] = [];
+  // Native API thinking blocks (`{type:"thinking",thinking,signature}` /
+  // `redacted_thinking`), kept raw so callers can echo them back verbatim —
+  // their signatures are validated by Anthropic on the next turn.
+  const reasoningBlocks: any[] = [];
 
   for (const answer of answers) {
     if (!answer.type) {
@@ -834,9 +927,15 @@ async function callAnthropic(
       textResponse = textResponse ? `${textResponse}\n\n${text}` : text;
     } else if (answer.type === "tool_use") {
       functionCalls.push({
+        id: answer.id,
         name: answer.name,
         arguments: answer.input,
       });
+    } else if (
+      answer.type === "thinking" ||
+      answer.type === "redacted_thinking"
+    ) {
+      reasoningBlocks.push(answer);
     }
   }
 
@@ -871,6 +970,7 @@ async function callAnthropic(
     function_call: functionCalls[0] || null,
     function_calls: functionCalls,
     files: [],
+    reasoningDetails: reasoningBlocks.length ? reasoningBlocks : undefined,
     usage,
   };
 }
@@ -896,6 +996,9 @@ async function callAnthropicWithRetries(
 // ─────────────────────────────────────────────────────────────────────────────
 
 function jigGoogleMessages(messages: GoogleAIMessage[]): GoogleAIMessage[] {
+  const hasFunctionPart = (parts: GoogleAIPart[]) =>
+    parts.some((p) => "functionCall" in p || "functionResponse" in p);
+
   let jiggedMessages = messages.slice();
 
   // Ensure first message is from user
@@ -919,8 +1022,11 @@ function jigGoogleMessages(messages: GoogleAIMessage[]): GoogleAIMessage[] {
     return [...acc, message];
   }, [] as GoogleAIMessage[]);
 
-  // Ensure last message is from user
-  if (jiggedMessages[jiggedMessages.length - 1]?.role === "model") {
+  // Ensure last message is from user — but don't append a placeholder after a
+  // model turn that ends in a functionCall (it would orphan the call into
+  // history and send "..." as the message).
+  const last = jiggedMessages[jiggedMessages.length - 1];
+  if (last?.role === "model" && !hasFunctionPart(last.parts)) {
     jiggedMessages.push({ role: "user", parts: [{ text: "..." }] });
   }
 
@@ -947,9 +1053,32 @@ async function prepareGoogleAIPayload(
       : undefined,
   };
 
+  // id -> tool name, to backfill functionResponse.name when a caller omits it.
+  const toolNameById = new Map<string, string>();
+  for (const m of payload.messages) {
+    for (const fc of m.functionCalls || []) {
+      if (fc.id) toolNameById.set(fc.id, fc.name);
+    }
+  }
+
   for (const message of payload.messages) {
     if (message.role === "system") {
       preparedPayload.systemInstruction = message.content;
+      continue;
+    }
+
+    // role:"tool" → a user turn carrying functionResponse parts.
+    if (message.role === "tool") {
+      preparedPayload.messages.push({
+        role: "user",
+        parts: (message.toolResults || []).map((tr) => ({
+          functionResponse: {
+            id: tr.toolCallId,
+            name: tr.name ?? toolNameById.get(tr.toolCallId) ?? "",
+            response: { output: tr.content },
+          },
+        })),
+      });
       continue;
     }
 
@@ -985,6 +1114,20 @@ async function prepareGoogleAIPayload(
       }
     }
 
+    for (const fc of message.functionCalls || []) {
+      parts.push({
+        functionCall: {
+          id: fc.id,
+          name: fc.name,
+          args: fc.arguments,
+        },
+        // Gemini requires its thoughtSignature echoed back on the call part.
+        ...(fc.thoughtSignature
+          ? { thoughtSignature: fc.thoughtSignature }
+          : {}),
+      });
+    }
+
     preparedPayload.messages.push({
       role: message.role === "assistant" ? "model" : message.role,
       parts,
@@ -998,40 +1141,83 @@ async function callGoogleAI(
   id: Identifier,
   payload: GoogleAIPayload,
 ): Promise<ParsedResponseMessage> {
-  const googleMessages = jigGoogleMessages(payload.messages);
-  const history = googleMessages.slice(0, -1);
-  const lastMessage = googleMessages.slice(-1)[0];
+  const contents = jigGoogleMessages(payload.messages);
 
-  const genAI = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+  // Call the REST generateContent endpoint directly rather than via @google/genai:
+  // the pinned SDK (0.6.1) silently strips Gemini's per-call `thoughtSignature`,
+  // which Gemini REQUIRES echoed back on multi-turn tool calls (a missing one
+  // 400s the request). Going over the wire ourselves preserves it both ways.
+  const requestBody: any = {
+    contents,
+    generationConfig: { responseModalities: ["TEXT"] },
+  };
+  if (payload.tools) requestBody.tools = [payload.tools];
+  if (payload.systemInstruction) {
+    requestBody.systemInstruction = {
+      parts: [{ text: payload.systemInstruction }],
+    };
+  }
 
-  const chat = genAI.chats.create({
-    model: payload.model,
-    history,
-    config: {
-      responseModalities: ["Text"],
-      tools: payload.tools ? [payload.tools] : undefined,
-      systemInstruction: payload.systemInstruction,
-    },
-  });
-
-  const response = await chat.sendMessage({ message: lastMessage.parts });
+  let response: any;
+  try {
+    const httpResponse = await axios.post(
+      `https://generativelanguage.googleapis.com/v1beta/models/${payload.model}:generateContent`,
+      requestBody,
+      {
+        headers: {
+          "content-type": "application/json",
+          "x-goog-api-key": process.env.GEMINI_API_KEY as string,
+        },
+        timeout: 60000,
+      },
+    );
+    response = httpResponse.data;
+  } catch (err: any) {
+    // Re-shape the API error so callGoogleAIWithRetries' circuit breaker can read
+    // message / status / promptFeedback off it.
+    const apiError = err?.response?.data?.error;
+    const wrapped = new Error(
+      apiError?.message || err?.message || "Google AI API request failed",
+    ) as any;
+    wrapped.status = apiError?.status ?? err?.response?.status;
+    wrapped.code = apiError?.code;
+    wrapped.details = apiError?.details;
+    wrapped.promptFeedback = err?.response?.data?.promptFeedback;
+    throw wrapped;
+  }
 
   let text = "";
   const files: File[] = [];
+  const reasoningParts: any[] = [];
+  // Built from content.parts (not response.functionCalls) so we can keep each
+  // call's thoughtSignature, which the accessor drops. Gemini may omit ids —
+  // synthesize positional ones so the caller can pair each with a
+  // `ToolResult.toolCallId` next turn; the thoughtSignature MUST be echoed back
+  // on round-trip (else Gemini 400s "missing a thought_signature").
+  const functionCalls: FunctionCall[] = [];
 
   for (const part of response.candidates?.[0]?.content?.parts || []) {
+    // Thinking parts (thought:true) carry chain-of-thought, not the answer.
+    if ((part as any).thought) {
+      reasoningParts.push(part);
+      continue;
+    }
+    if (part.functionCall) {
+      functionCalls.push({
+        id: part.functionCall.id ?? `call_${functionCalls.length}`,
+        name: part.functionCall.name ?? "",
+        arguments: part.functionCall.args ?? {},
+        thoughtSignature: (part as any).thoughtSignature,
+      });
+      continue;
+    }
     if (part.text) text += part.text;
     if (part.inlineData?.data) {
       files.push({ mimeType: "image/png", data: part.inlineData.data });
     }
   }
 
-  const functionCalls = response.functionCalls?.map((fc) => ({
-    name: fc.name ?? "",
-    arguments: fc.args ?? {},
-  }));
-
-  if (!text && !functionCalls?.length && !files.length) {
+  if (!text && !functionCalls.length && !files.length) {
     const candidate = response.candidates?.[0];
     const finishReason = candidate?.finishReason;
 
@@ -1068,8 +1254,9 @@ async function callGoogleAI(
     role: "assistant",
     content: text || null,
     files,
-    function_call: functionCalls?.[0] || null,
-    function_calls: functionCalls || [],
+    function_call: functionCalls[0] || null,
+    function_calls: functionCalls,
+    reasoningDetails: reasoningParts.length ? reasoningParts : undefined,
     usage: response.usageMetadata
       ? {
           prompt_tokens: response.usageMetadata.promptTokenCount ?? 0,
@@ -1224,13 +1411,57 @@ function normalizeMessageContent(
     : content;
 }
 
+/**
+ * Serialize generic messages for OpenAI-compatible chat APIs (Groq, OpenRouter).
+ * Mirrors the OpenAI adapter but keeps content as a plain string. Tool calls
+ * become assistant `tool_calls`, and a `role:"tool"` message expands to one
+ * `{role:"tool", tool_call_id, content}` per result. Reasoning is passed
+ * through only when the caller supplied it.
+ */
+function prepareOpenAICompatMessages(
+  messages: GenericMessage[],
+): OpenAIMessage[] {
+  const out: OpenAIMessage[] = [];
+  for (const message of messages) {
+    if (message.role === "tool") {
+      for (const tr of message.toolResults || []) {
+        out.push({
+          role: "tool",
+          tool_call_id: tr.toolCallId,
+          content: tr.content,
+        });
+      }
+      continue;
+    }
+
+    const outMessage: OpenAIMessage = {
+      role: message.role,
+      content: normalizeMessageContent(message.content),
+    };
+    if (message.functionCalls?.length) {
+      outMessage.tool_calls = message.functionCalls.map((fc, i) => ({
+        id: fc.id ?? `call_${i}`,
+        type: "function" as const,
+        function: {
+          name: fc.name,
+          arguments: JSON.stringify(fc.arguments),
+        },
+      }));
+      // OpenAI-compatible APIs want null content on a tool-call-only turn.
+      if (!message.content) outMessage.content = null;
+    }
+    if (message.reasoning) outMessage.reasoning = message.reasoning;
+    if (message.reasoningDetails)
+      outMessage.reasoning_details = message.reasoningDetails;
+    out.push(outMessage);
+  }
+  return out;
+}
+
 function prepareGroqPayload(payload: GenericPayload): GroqPayload {
   return {
     model: payload.model as GroqModel,
-    messages: payload.messages.map((message) => ({
-      role: message.role,
-      content: normalizeMessageContent(message.content),
-    })),
+    messages: prepareOpenAICompatMessages(payload.messages),
     tools: payload.functions?.map((fn) => ({
       type: "function",
       function: fn,
@@ -1267,8 +1498,10 @@ async function callGroq(
 
   const functionCalls: FunctionCall[] = [];
   if (answer.tool_calls?.length) {
-    for (const tc of answer.tool_calls) {
+    for (let i = 0; i < answer.tool_calls.length; i++) {
+      const tc = answer.tool_calls[i];
       functionCalls.push({
+        id: tc.id ?? `call_${i}`,
         name: tc.function.name,
         arguments: JSON.parse(tc.function.arguments),
       });
@@ -1295,6 +1528,7 @@ async function callGroq(
     function_call: functionCalls[0] || null,
     function_calls: functionCalls,
     files: [],
+    reasoning: answer.reasoning ?? undefined,
     usage: response.data.usage
       ? {
           prompt_tokens: response.data.usage.prompt_tokens,
@@ -1322,10 +1556,7 @@ async function callGroqWithRetries(
 function prepareOpenRouterPayload(payload: GenericPayload): OpenRouterPayload {
   return {
     model: payload.model as OpenRouterModel,
-    messages: payload.messages.map((message) => ({
-      role: message.role,
-      content: normalizeMessageContent(message.content),
-    })),
+    messages: prepareOpenAICompatMessages(payload.messages),
     tools: payload.functions?.map((fn) => ({
       type: "function",
       function: fn,
@@ -1363,8 +1594,10 @@ async function callOpenRouter(
 
   const functionCalls: FunctionCall[] = [];
   if (answer.tool_calls?.length) {
-    for (const tc of answer.tool_calls) {
+    for (let i = 0; i < answer.tool_calls.length; i++) {
+      const tc = answer.tool_calls[i];
       functionCalls.push({
+        id: tc.id ?? `call_${i}`,
         name: tc.function.name,
         arguments: JSON.parse(tc.function.arguments),
       });
@@ -1393,6 +1626,8 @@ async function callOpenRouter(
     function_call: functionCalls[0] || null,
     function_calls: functionCalls,
     files: [],
+    reasoning: answer.reasoning ?? undefined,
+    reasoningDetails: answer.reasoning_details ?? undefined,
     usage: response.data.usage
       ? {
           prompt_tokens: response.data.usage.prompt_tokens,
