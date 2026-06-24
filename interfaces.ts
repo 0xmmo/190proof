@@ -75,12 +75,95 @@ export type AIChainResponse = {
   functionCalls: FunctionCall[];
 };
 
+/**
+ * A single conversation turn passed to `callWithRetries`. The SDK serializes
+ * these into each provider's native message format.
+ *
+ * ## Multi-turn tool calls
+ * To continue after the model calls a tool, append the model's own assistant
+ * turn and then the tool result, then call again:
+ *
+ * 1. Read the assistant turn off the response: `function_calls` (each with an
+ *    `id`) and — for reasoning models — `reasoning` / `reasoningDetails`.
+ * 2. Push back an `assistant` message carrying those same `functionCalls` (and,
+ *    to keep the model's chain-of-thought, the captured reasoning fields).
+ * 3. Push back one `role: "tool"` message whose `toolResults` answer each call
+ *    by `toolCallId`.
+ *
+ * The SDK is a pure transport: it does NOT echo reasoning or pair results for
+ * you — it serializes exactly what you put here. Every tool/reasoning field is
+ * optional, so a plain `{ role, content }` message behaves as before.
+ *
+ * @example
+ * // turn 1 — model asks for the weather
+ * const a = await callWithRetries(id, { model, messages, functions });
+ * // a.function_calls -> [{ id: "call_abc", name: "get_weather", arguments: { city: "Tokyo" } }]
+ *
+ * // turn 2 — feed the call + its result back
+ * const next = await callWithRetries(id, { model, functions, messages: [
+ *   ...messages,
+ *   { role: "assistant", content: a.content ?? "", functionCalls: a.function_calls,
+ *     reasoning: a.reasoning, reasoningDetails: a.reasoningDetails },
+ *   { role: "tool", content: "", toolResults: [
+ *     { toolCallId: "call_abc", name: "get_weather", content: '{"tempC":22}' } ] },
+ * ]});
+ */
 export interface GenericMessage {
-  role: "user" | "assistant" | "system";
+  /**
+   * `"tool"` carries tool results (see `toolResults`) back to the model and
+   * must immediately follow the `assistant` turn that made the matching calls.
+   */
+  role: "user" | "assistant" | "system" | "tool";
+  /** Plain-text content. Use `""` for a tool-call-only or tool-result turn. */
   content: string;
   timestamp?: string;
   files?: File[];
+  /**
+   * Tool calls the model made on an `assistant` turn. Pass back the `id`s you
+   * received in `ParsedResponseMessage.function_calls` so the provider can pair
+   * them with the `toolResults` that follow.
+   */
   functionCalls?: FunctionCall[];
+  /**
+   * Tool outputs on a `role: "tool"` message — one entry per call (parallel
+   * calls produce several). Each `toolCallId` must match a `FunctionCall.id`
+   * from the preceding assistant turn.
+   */
+  toolResults?: ToolResult[];
+  /**
+   * Optional reasoning string to echo back on an `assistant` turn (e.g.
+   * OpenRouter/DeepSeek `reasoning`). Round-tripping it keeps the model's
+   * chain-of-thought across tool calls; some thinking models (DeepSeek V4)
+   * require it to avoid a 400 on the next turn.
+   */
+  reasoning?: string;
+  /**
+   * Optional structured reasoning to echo back on an `assistant` turn
+   * (OpenRouter `reasoning_details`, or Anthropic `thinking` /
+   * `redacted_thinking` blocks captured in
+   * `ParsedResponseMessage.reasoningDetails`). Preserves the signatures /
+   * encrypted payloads that providers validate on round-trip.
+   */
+  reasoningDetails?: any;
+}
+
+/**
+ * The result of executing one tool call, fed back to the model on a
+ * `role: "tool"` message. The SDK maps this to each provider's native shape:
+ * OpenAI/Groq/OpenRouter `{ role: "tool", tool_call_id, content }`, Anthropic a
+ * `tool_result` block, Google a `functionResponse` part.
+ */
+export interface ToolResult {
+  /** The `id` of the `FunctionCall` this answers (from the prior assistant turn). */
+  toolCallId: string;
+  /**
+   * The tool/function name. Required by Anthropic and Google on round-trip; the
+   * SDK falls back to the matching call's name when omitted, but supplying it is
+   * recommended.
+   */
+  name?: string;
+  /** The tool output, serialized to a string (JSON or plain text). */
+  content: string;
 }
 
 export interface File {
@@ -89,9 +172,32 @@ export interface File {
   data?: string;
 }
 
+/**
+ * A tool/function call on the wire for OpenAI-compatible APIs (OpenAI, Groq,
+ * OpenRouter).
+ */
+export interface OpenAIToolCall {
+  id: string;
+  type: "function";
+  function: {
+    name: string;
+    /** JSON-stringified arguments object. */
+    arguments: string;
+  };
+}
+
 export interface OpenAIMessage {
-  role: "user" | "assistant" | "system";
-  content: string | OpenAIContentBlock[];
+  role: "user" | "assistant" | "system" | "tool";
+  /** `null` for an assistant turn that is tool-calls-only. */
+  content: string | OpenAIContentBlock[] | null;
+  /** Present on an assistant turn that called tools. */
+  tool_calls?: OpenAIToolCall[];
+  /** Present on a `role: "tool"` message; matches the originating `OpenAIToolCall.id`. */
+  tool_call_id?: string;
+  /** Reasoning echoed back on an assistant turn (OpenRouter/DeepSeek; OAI-compatible proxies). */
+  reasoning?: string;
+  /** Structured reasoning echoed back on an assistant turn (OpenRouter `reasoning_details`). */
+  reasoning_details?: any;
 }
 
 export type OpenAIContentBlock =
@@ -125,7 +231,11 @@ export interface AnthropicAIMessage {
 
 export type AnthropicContentBlock =
   | AnthropicTextContentBlock
-  | AnthropicImageContentBlock;
+  | AnthropicImageContentBlock
+  | AnthropicToolUseBlock
+  | AnthropicToolResultBlock
+  | AnthropicThinkingBlock
+  | AnthropicRedactedThinkingBlock;
 
 export interface AnthropicTextContentBlock {
   type: "text";
@@ -141,6 +251,34 @@ export interface AnthropicImageContentBlock {
   };
 }
 
+/** A tool call on an Anthropic assistant turn. */
+export interface AnthropicToolUseBlock {
+  type: "tool_use";
+  id: string;
+  name: string;
+  input: Record<string, any>;
+}
+
+/** A tool result, carried on a (user-role) Anthropic message. */
+export interface AnthropicToolResultBlock {
+  type: "tool_result";
+  tool_use_id: string;
+  content: string;
+}
+
+/** A reasoning block round-tripped on an assistant turn; `signature` is validated by Anthropic. */
+export interface AnthropicThinkingBlock {
+  type: "thinking";
+  thinking: string;
+  signature: string;
+}
+
+/** An encrypted reasoning block round-tripped verbatim on an assistant turn. */
+export interface AnthropicRedactedThinkingBlock {
+  type: "redacted_thinking";
+  data: string;
+}
+
 export interface OpenAIResponseMessage {
   role: "assistant";
   content: string | null;
@@ -153,9 +291,24 @@ export interface OpenAIResponseMessage {
 export interface ParsedResponseMessage {
   role: "assistant";
   content: string | null;
+  /** First of `function_calls` (backward-compat); carries `id` when the provider returns one. */
   function_call: FunctionCall | null;
+  /** All tool calls the model made this turn, each with an `id` for round-tripping. */
   function_calls: FunctionCall[];
   files: File[];
+  /**
+   * Reasoning string from reasoning models (OpenRouter/DeepSeek `reasoning`).
+   * Echo back via `GenericMessage.reasoning` to preserve chain-of-thought across
+   * tool calls. Undefined when the model/provider returns none.
+   */
+  reasoning?: string;
+  /**
+   * Structured reasoning (OpenRouter `reasoning_details`, or Anthropic
+   * `thinking` / `redacted_thinking` blocks). Echo back verbatim via
+   * `GenericMessage.reasoningDetails` — it carries signatures some providers
+   * validate. Undefined when the model/provider returns none.
+   */
+  reasoningDetails?: any;
   usage: {
     prompt_tokens: number;
     completion_tokens: number;
@@ -166,22 +319,22 @@ export interface ParsedResponseMessage {
 }
 
 export interface FunctionCall {
+  /**
+   * Provider tool-call id, surfaced on responses and used to pair a call with
+   * its `ToolResult.toolCallId` on the next turn. The SDK synthesizes
+   * `call_<index>` for providers that don't return one (e.g. Google).
+   */
+  id?: string;
   name: string;
   arguments: Record<string, any>;
-}
-
-export interface OpenAIResponseMessage {
-  role: "assistant";
-  content: string | null;
-  function_call: {
-    name: string;
-    arguments: string; // unparsed arguments object
-  } | null;
-}
-
-export interface FunctionCall {
-  name: string;
-  arguments: Record<string, any>;
+  /**
+   * Opaque per-call signature that must be echoed back verbatim on round-trip.
+   * Currently Google's `thoughtSignature` — Gemini REQUIRES it on functionCall
+   * parts in multi-turn tool use (a missing one 400s the next request). The SDK
+   * captures it on responses and re-emits it when you pass the call back;
+   * undefined for providers that don't use one.
+   */
+  thoughtSignature?: string;
 }
 
 export interface OpenAIConfig {
@@ -302,7 +455,32 @@ export interface GoogleAIFileDataPart {
   };
 }
 
-export type GoogleAIPart = GoogleAITextPart | GoogleAIInlineDataPart | GoogleAIFileDataPart;
+/** A tool call on a Google `model` turn. */
+export interface GoogleAIFunctionCallPart {
+  functionCall: {
+    id?: string;
+    name: string;
+    args: Record<string, any>;
+  };
+  /** Echoed back verbatim on round-trip — Gemini requires it for tool use. */
+  thoughtSignature?: string;
+}
+
+/** A tool result, carried on a Google `user` turn. */
+export interface GoogleAIFunctionResponsePart {
+  functionResponse: {
+    id?: string;
+    name: string;
+    response: Record<string, any>;
+  };
+}
+
+export type GoogleAIPart =
+  | GoogleAITextPart
+  | GoogleAIInlineDataPart
+  | GoogleAIFileDataPart
+  | GoogleAIFunctionCallPart
+  | GoogleAIFunctionResponsePart;
 export interface GoogleAIMessage {
   role: "user" | "model";
   parts: GoogleAIPart[];

@@ -311,6 +311,70 @@ describe.each(modelConfigs)(
     expect(answer.content?.toLowerCase()).toContain("green");
   });
 
+  itIfFunctions("multi-turn tool round-trip", async () => {
+    const functions = [
+      {
+        name: "get_weather",
+        description: "Get the weather of a given city",
+        parameters: {
+          type: "object",
+          properties: {
+            city_name: { type: "string", description: "The name of the city" },
+          },
+          required: ["city_name"],
+        },
+      },
+    ];
+    const userMsg = {
+      role: "user" as const,
+      content: "What is the weather in Tokyo? Use the get_weather tool.",
+    };
+
+    // turn 1 — model calls the tool
+    const first = await callWithRetries(
+      [provider, "roundtrip_1"],
+      { model, messages: [userMsg], functions },
+      config,
+    );
+    expect(first.function_call?.name).toEqual("get_weather");
+    // every provider surfaces an id (synthesized for those that don't return one)
+    expect(first.function_call?.id).toBeTruthy();
+
+    // turn 2 — feed the assistant call + the tool result back
+    const second = await callWithRetries(
+      [provider, "roundtrip_2"],
+      {
+        model,
+        messages: [
+          userMsg,
+          {
+            role: "assistant",
+            content: first.content ?? "",
+            functionCalls: first.function_calls,
+            reasoning: first.reasoning,
+            reasoningDetails: first.reasoningDetails,
+          },
+          {
+            role: "tool",
+            content: "",
+            toolResults: first.function_calls.map((fc) => ({
+              toolCallId: fc.id as string,
+              name: fc.name,
+              content: '{"tempC":22,"condition":"sunny"}',
+            })),
+          },
+        ],
+        functions,
+      },
+      config,
+    );
+
+    // the round-trip must not error and the model should answer in text using
+    // the result it was handed
+    expect(second.content).toBeTruthy();
+    expect(second.content?.toLowerCase()).toContain("22");
+  });
+
   test.skip("generates images", async () => {
     const aiPayload: GenericPayload = {
       model,
@@ -333,3 +397,71 @@ describe.each(modelConfigs)(
     expect(answer.files?.[0].mimeType).toBe("image/png");
   });
 });
+
+// DeepSeek V4 via OpenRouter is igpt's default model and the motivating case:
+// thinking models 400 on the next turn unless the prior reasoning is passed
+// back. This exercises the reasoning round-trip end-to-end. Skipped unless an
+// OpenRouter key is present so the keyless mocked suite (tool-calls.spec.ts)
+// still runs in CI.
+const itIfOpenRouter = process.env.OPENROUTER_API_KEY ? test : test.skip;
+itIfOpenRouter(
+  "OpenRouter DeepSeek-V4: tool round-trip preserves reasoning",
+  async () => {
+    const model = "openrouter:deepseek/deepseek-v4-flash";
+    const functions = [
+      {
+        name: "get_weather",
+        description: "Get the weather of a given city",
+        parameters: {
+          type: "object",
+          properties: {
+            city_name: { type: "string", description: "The name of the city" },
+          },
+          required: ["city_name"],
+        },
+      },
+    ];
+    const userMsg = {
+      role: "user" as const,
+      content: "What is the weather in Tokyo? Use the get_weather tool.",
+    };
+
+    const first = await callWithRetries(
+      ["DeepSeek", "rt1"],
+      { model, messages: [userMsg], functions },
+    );
+
+    // DeepSeek may answer directly; only round-trip when it actually called.
+    if (!first.function_call) {
+      expect(first.content).toBeTruthy();
+      return;
+    }
+
+    const second = await callWithRetries(["DeepSeek", "rt2"], {
+      model,
+      messages: [
+        userMsg,
+        {
+          role: "assistant",
+          content: first.content ?? "",
+          functionCalls: first.function_calls,
+          reasoning: first.reasoning,
+          reasoningDetails: first.reasoningDetails,
+        },
+        {
+          role: "tool",
+          content: "",
+          toolResults: first.function_calls.map((fc) => ({
+            toolCallId: fc.id as string,
+            name: fc.name,
+            content: '{"tempC":22,"condition":"sunny"}',
+          })),
+        },
+      ],
+      functions,
+    });
+
+    // The key assertion: the round-trip does not 400 and a usable answer returns.
+    expect(second.content).toBeTruthy();
+  },
+);
