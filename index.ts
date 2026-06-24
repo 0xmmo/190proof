@@ -1336,6 +1336,7 @@ function prepareOpenRouterPayload(payload: GenericPayload): OpenRouterPayload {
         : { type: "function", function: payload.function_call }
       : undefined,
     temperature: payload.temperature,
+    provider: payload.provider,
   };
 }
 

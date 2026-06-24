@@ -235,6 +235,25 @@ export interface GroqPayload {
   functions?: any[]; // Deprecate this
 }
 
+/**
+ * OpenRouter provider-routing preferences, forwarded verbatim as the request
+ * body's `provider` field. See https://openrouter.ai/docs/guides/routing/provider-selection
+ */
+export interface OpenRouterProviderPreferences {
+  /** Ordered list of provider slugs to try first (e.g. ["baidu", "siliconflow"]). */
+  order?: string[];
+  /** Restrict routing to exactly these provider slugs. */
+  only?: string[];
+  /** Provider slugs to exclude. */
+  ignore?: string[];
+  /** Only use providers serving these quantizations (e.g. ["fp8"]). */
+  quantizations?: string[];
+  /** When false, never fall back to providers outside `order`/`only`. */
+  allow_fallbacks?: boolean;
+  /** Override the default sort ("price" | "throughput" | "latency"). */
+  sort?: string;
+}
+
 export interface OpenRouterPayload {
   model: OpenRouterModel | string;
   messages: OpenAIMessage[];
@@ -244,6 +263,7 @@ export interface OpenRouterPayload {
     | "auto"
     | { type: "function"; function: { name: string } };
   temperature?: number;
+  provider?: OpenRouterProviderPreferences;
 }
 
 export interface OpenAIPayload {
@@ -307,6 +327,11 @@ export interface GenericPayload {
   function_call?: "none" | "auto" | { name: string };
   temperature?: number;
   fallbackModel?: AnyModel;
+  /**
+   * OpenRouter-only: provider-routing preferences. Ignored by non-OpenRouter
+   * adapters. Forwarded as the request body's `provider` field.
+   */
+  provider?: OpenRouterProviderPreferences;
 }
 
 export interface OpenAIBody {
