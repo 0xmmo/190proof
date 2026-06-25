@@ -1490,7 +1490,14 @@ async function callGroq(
     },
   );
 
-  const answer = response.data.choices[0]?.message;
+  // Like OpenRouter, Groq can return an error-shaped HTTP 200 with no `choices`
+  // key; surface it instead of throwing a cryptic `choices[0]` TypeError.
+  if (response.data.error) {
+    logger.error(id, "Groq error:", response.data.error);
+    throw new Error(`Groq error: ${response.data.error.message}`);
+  }
+
+  const answer = response.data.choices?.[0]?.message;
   if (!answer) {
     logger.error(id, "Missing answer in Groq API response:", response.data);
     throw new Error("Missing answer in Groq API");
@@ -1586,7 +1593,17 @@ async function callOpenRouter(
     },
   );
 
-  const answer = response.data.choices[0]?.message;
+  // OpenRouter wraps upstream provider failures (rate limits, moderation,
+  // model-unavailable) in an HTTP 200 whose body is `{ error: {...} }` with no
+  // `choices` key. Surface that error instead of letting `choices[0]` throw a
+  // cryptic "Cannot read properties of undefined (reading '0')" TypeError that
+  // hides the real reason. (Mirrors the OpenAI non-streaming guard above.)
+  if (response.data.error) {
+    logger.error(id, "OpenRouter error:", response.data.error);
+    throw new Error(`OpenRouter error: ${response.data.error.message}`);
+  }
+
+  const answer = response.data.choices?.[0]?.message;
   if (!answer) {
     logger.error(id, "Missing answer in OpenRouter API response:", response.data);
     throw new Error("Missing answer in OpenRouter API");
