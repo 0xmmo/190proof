@@ -96,8 +96,17 @@ async function withRetries<T>(
     }
   }
 
+  // Fold the underlying cause into .message so it survives callers that read
+  // error.message (and drop error.cause) — otherwise the raw reason (timeout,
+  // provider 4xx body, etc.) never reaches the agent's model-facing error. Prefer
+  // the provider's response body, which is richer than axios's "Request failed
+  // with status code N".
+  const detail =
+    lastError?.response?.data?.error?.message ||
+    lastError?.message ||
+    String(lastError);
   const error = new Error(
-    `Failed to call ${apiName} API after ${retries} attempts`,
+    `Failed to call ${apiName} API after ${retries} attempts: ${detail}`,
   ) as any;
   error.cause = lastError;
   throw error;
