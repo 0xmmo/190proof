@@ -492,8 +492,6 @@ export interface GoogleAIPayload {
     functionDeclarations: FunctionDefinition[];
   };
   systemInstruction?: string;
-  /** Per-request HTTP timeout in ms (defaults to 60s). See GenericPayload. */
-  requestTimeoutMs?: number;
 }
 
 export type Provider = "openai" | "anthropic" | "google" | "groq" | "openrouter";
@@ -514,9 +512,10 @@ export interface GenericPayload {
   provider?: OpenRouterProviderPreferences;
   /**
    * Per-request HTTP timeout in ms for the underlying provider call (applied
-   * per attempt, not across retries). Currently honored by the Google adapter;
-   * defaults to 60s when omitted. Raise it for slow, large generations (e.g.
-   * single-file app codegen) so a long-but-valid response isn't cut short.
+   * per attempt, not across retries). Honored by all adapters (Anthropic,
+   * Google, OpenAI, OpenRouter, Groq); defaults to 120s when omitted. Raise it
+   * for slow, large generations (e.g. single-file app codegen) so a long-but-
+   * valid response isn't cut short.
    */
   requestTimeoutMs?: number;
 }
