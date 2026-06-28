@@ -1040,6 +1040,7 @@ async function prepareGoogleAIPayload(
   const preparedPayload: GoogleAIPayload = {
     model: payload.model as GeminiModel,
     messages: [],
+    requestTimeoutMs: payload.requestTimeoutMs,
     tools: payload.functions
       ? {
           functionDeclarations: payload.functions.map((fn) => ({
@@ -1168,7 +1169,10 @@ async function callGoogleAI(
           "content-type": "application/json",
           "x-goog-api-key": process.env.GEMINI_API_KEY as string,
         },
-        timeout: 60000,
+        // Per-attempt timeout. Defaults to 60s; callers pass a larger value via
+        // payload.requestTimeoutMs for slow, large generations (e.g. single-file
+        // app codegen) so a long-but-valid response isn't cut short.
+        timeout: payload.requestTimeoutMs ?? 60000,
       },
     );
     response = httpResponse.data;
