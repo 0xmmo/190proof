@@ -1622,6 +1622,95 @@ function prepareOpenRouterPayload(payload: GenericPayload): OpenRouterPayload {
   };
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// DeepSeek "DSML" tool-call recovery
+// ─────────────────────────────────────────────────────────────────────────────
+// DeepSeek models (e.g. deepseek-v4-flash) on OpenRouter intermittently emit
+// their native tool-call markup as plain assistant *content* instead of
+// populating the response's `tool_calls`. The markup ("DSML") looks like:
+//
+//   <｜DSML｜tool_calls>
+//     <｜DSML｜invoke name="use_skills">
+//       <｜DSML｜parameter name="skills" string="false">["search"]</｜DSML｜parameter>
+//     </｜DSML｜invoke>
+//   </｜DSML｜tool_calls>
+//
+// with either one or two fullwidth vertical bars (｜ = U+FF5C) around DSML. The
+// `string` attribute says whether the value is a literal string ("true") or a
+// JSON value to parse ("false"). We recover these into structured FunctionCalls
+// so the turn executes normally instead of leaking raw markup to the caller.
+//
+// Regex tags use `｜+` (one-or-more fullwidth vertical bars) so the single-
+// and double-bar variants both match.
+const DSML_ENVELOPE_RE = /<｜+DSML｜+tool_calls>/;
+const DSML_DELIMITER_RE = /<\/?｜+DSML｜+/;
+const DSML_INVOKE_RE =
+  /<｜+DSML｜+invoke\s+name="([^"]+)"\s*>([\s\S]*?)<\/｜+DSML｜+invoke>/g;
+const DSML_PARAM_RE =
+  /<｜+DSML｜+parameter\s+name="([^"]+)"(?:\s+string="(true|false)")?\s*>([\s\S]*?)<\/｜+DSML｜+parameter>/g;
+// Any DSML tag (open or close), used to excise the whole markup span from
+// surrounding prose once the calls have been extracted.
+const DSML_ANY_TAG_RE = /<\/?｜+DSML｜+[^>]*>/g;
+
+function parseDsmlToolCalls(content: string): {
+  calls: FunctionCall[];
+  remainingContent: string | null;
+} {
+  const calls: FunctionCall[] = [];
+
+  DSML_INVOKE_RE.lastIndex = 0;
+  let invokeMatch: RegExpExecArray | null;
+  while ((invokeMatch = DSML_INVOKE_RE.exec(content)) !== null) {
+    const name = invokeMatch[1];
+    const inner = invokeMatch[2];
+    const args: Record<string, any> = {};
+    let ok = true;
+
+    DSML_PARAM_RE.lastIndex = 0;
+    let paramMatch: RegExpExecArray | null;
+    while ((paramMatch = DSML_PARAM_RE.exec(inner)) !== null) {
+      const [, paramName, stringAttr, rawValue] = paramMatch;
+      if (stringAttr === "false") {
+        // value is a JSON literal (array / number / object / bool / quoted string)
+        try {
+          args[paramName] = JSON.parse(rawValue);
+        } catch {
+          ok = false; // malformed typed arg → don't emit a wrong-typed call
+          break;
+        }
+      } else {
+        // string="true" (or attribute absent) → literal string value
+        args[paramName] = rawValue;
+      }
+    }
+
+    if (ok && name) {
+      calls.push({ id: `call_${calls.length}`, name, arguments: args });
+    }
+  }
+
+  if (!calls.length) {
+    return { calls, remainingContent: content };
+  }
+
+  // Excise the whole DSML span (first tag through last tag, including the
+  // already-captured parameter values between them) so any surrounding prose
+  // survives but the raw markup never reaches the caller.
+  DSML_ANY_TAG_RE.lastIndex = 0;
+  let first = -1;
+  let last = -1;
+  let tag: RegExpExecArray | null;
+  while ((tag = DSML_ANY_TAG_RE.exec(content)) !== null) {
+    if (first === -1) first = tag.index;
+    last = tag.index + tag[0].length;
+  }
+  const remaining =
+    first === -1
+      ? content
+      : (content.slice(0, first) + content.slice(last)).trim();
+  return { calls, remainingContent: remaining.length ? remaining : null };
+}
+
 async function callOpenRouter(
   id: Identifier,
   payload: OpenRouterPayload,
@@ -1667,25 +1756,39 @@ async function callOpenRouter(
     }
   }
 
-  // Reasoning models (e.g. deepseek) can return a completion whose output went
-  // entirely to the (discarded) `reasoning` channel, leaving content empty. An
-  // empty 200 is not a usable answer — throw so withRetries retries this model
-  // and, on exhaustion, callWithRetries falls back to fallbackModel. (Mirrors
-  // the streaming path's guard in parseStreamedResponse.)
-  if (!answer.content && !functionCalls.length) {
+  // DeepSeek sometimes emits its native "DSML" tool-call markup as plain content
+  // instead of populating tool_calls. Recover it into structured calls so the
+  // turn executes normally instead of leaking raw markup to the caller.
+  let content: string | null = answer.content ?? null;
+  if (!functionCalls.length && content && DSML_ENVELOPE_RE.test(content)) {
+    const { calls, remainingContent } = parseDsmlToolCalls(content);
+    if (calls.length) {
+      functionCalls.push(...calls);
+      content = remainingContent;
+    }
+  }
+
+  // Not a usable answer — an empty completion (reasoning models e.g. deepseek
+  // can route all output to the discarded `reasoning` channel), OR a DSML
+  // envelope we couldn't parse into a call (truncated/malformed). Throw so
+  // withRetries retries this model and, on exhaustion, callWithRetries falls
+  // back to fallbackModel. (Mirrors the streaming path's guard in
+  // parseStreamedResponse.)
+  const hasUnparsedDsml = !!content && DSML_DELIMITER_RE.test(content);
+  if (!functionCalls.length && (!content || hasUnparsedDsml)) {
     logger.error(
       id,
-      "OpenRouter: received message without content or function_call:",
+      "OpenRouter: empty or unparseable completion:",
       JSON.stringify(response.data),
     );
     throw new Error(
-      "OpenRouter: received message without content or function_call",
+      "OpenRouter: received message without usable content or function_call",
     );
   }
 
   return {
     role: "assistant",
-    content: answer.content || null,
+    content: content || null,
     function_call: functionCalls[0] || null,
     function_calls: functionCalls,
     files: [],
