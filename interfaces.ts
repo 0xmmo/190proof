@@ -518,6 +518,14 @@ export interface GenericPayload {
    * valid response isn't cut short.
    */
   requestTimeoutMs?: number;
+  /**
+   * Optional caller-supplied cancellation signal. When it aborts, the in-flight
+   * provider request is cancelled and `callWithRetries` rejects immediately —
+   * it does NOT retry or fall back (both retry loop and fallback branch bail on
+   * `signal.aborted`). Threaded through every adapter to the underlying
+   * fetch/axios/SDK call, mirroring `requestTimeoutMs`.
+   */
+  signal?: AbortSignal;
 }
 
 export interface OpenAIBody {
