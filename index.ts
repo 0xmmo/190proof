@@ -59,6 +59,18 @@ export {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
+ * `AbortSignal.any` exists at runtime (Node 18.17+/20.3+) but isn't in the
+ * pinned @types/node lib; centralize the cast so call sites stay typed. Used to
+ * merge a caller's cancellation signal with an adapter's internal timeout
+ * controller without clobbering either.
+ */
+function anySignal(signals: AbortSignal[]): AbortSignal {
+  return (AbortSignal as unknown as { any(s: AbortSignal[]): AbortSignal }).any(
+    signals,
+  );
+}
+
+/**
  * Generic retry wrapper for API calls with exponential backoff.
  */
 async function withRetries<T>(
@@ -69,6 +81,7 @@ async function withRetries<T>(
     retries?: number;
     baseDelayMs?: number;
     onError?: (error: any, attempt: number) => void;
+    signal?: AbortSignal;
   } = {},
 ): Promise<T> {
   const { retries = 5, baseDelayMs = 125, onError } = options;
@@ -81,6 +94,11 @@ async function withRetries<T>(
       return await fn();
     } catch (error: any) {
       lastError = error;
+
+      // Caller cancelled — reject immediately, never retry. Keyed on
+      // signal.aborted (not error.name/code) because some adapters re-wrap the
+      // underlying abort error and lose its name (e.g. the Google adapter).
+      if (options.signal?.aborted) throw error;
 
       if (onError) {
         onError(error, attempt);
@@ -393,6 +411,7 @@ async function callOpenAIStream(
   openAiConfig: OpenAIConfig | undefined,
   chunkTimeoutMs: number,
   requestTimeoutMs: number = 120_000,
+  signal?: AbortSignal,
 ): Promise<ParsedResponseMessage> {
   const functionNames: Set<string> | null = openAiPayload.tools
     ? new Set(openAiPayload.tools.map((fn) => fn.function.name as string))
@@ -420,7 +439,10 @@ async function callOpenAIStream(
     method: "POST",
     headers,
     body: JSON.stringify({ ...openAiPayload, stream: true }),
-    signal: controller.signal,
+    // Merge (don't overwrite) the internal timeout controller with the caller's
+    // cancellation signal so both an internal timeout and an external abort stop
+    // the stream.
+    signal: signal ? anySignal([controller.signal, signal]) : controller.signal,
   });
 
   if (!response.body) {
@@ -532,6 +554,7 @@ async function callOpenAI(
   openAiPayload: OpenAIPayload,
   openAiConfig: OpenAIConfig | undefined,
   requestTimeoutMs: number = 120_000,
+  signal?: AbortSignal,
 ): Promise<ParsedResponseMessage> {
   const { endpoint, headers } = buildOpenAIRequestConfig(
     id,
@@ -549,7 +572,8 @@ async function callOpenAI(
       method: "POST",
       headers,
       body: JSON.stringify({ ...openAiPayload, stream: false }),
-      signal: controller.signal,
+      // Merge the internal timeout controller with the caller's cancellation signal.
+      signal: signal ? anySignal([controller.signal, signal]) : controller.signal,
     });
 
     if (!response.ok) {
@@ -634,6 +658,7 @@ async function callOpenAiWithRetries(
   retries: number = 5,
   chunkTimeoutMs: number = 15_000,
   requestTimeoutMs: number = 120_000,
+  signal?: AbortSignal,
 ): Promise<ParsedResponseMessage> {
   logger.log(
     id,
@@ -659,13 +684,15 @@ async function callOpenAiWithRetries(
           openAiConfig,
           chunkTimeoutMs,
           requestTimeoutMs,
+          signal,
         );
       } else {
-        return callOpenAI(id, openAiPayload, openAiConfig, requestTimeoutMs);
+        return callOpenAI(id, openAiPayload, openAiConfig, requestTimeoutMs, signal);
       }
     },
     {
       retries,
+      signal,
       baseDelayMs: 250,
       onError: (error, attempt) => {
         logger.error(
@@ -857,6 +884,7 @@ async function callAnthropic(
   payload: AnthropicAIPayload,
   config?: AnthropicAIConfig,
   requestTimeoutMs: number = 120_000,
+  signal?: AbortSignal,
 ): Promise<ParsedResponseMessage> {
   const anthropicMessages = jigAnthropicMessages(payload.messages);
   const tools = payload.functions?.map((f) => ({
@@ -885,6 +913,7 @@ async function callAnthropic(
         body: JSON.stringify(bedrockPayload),
         modelId: MODEL_ID,
       }),
+      { abortSignal: signal },
     );
 
     const decodedResponseBody = new TextDecoder().decode(response.body);
@@ -922,6 +951,7 @@ async function callAnthropic(
           "anthropic-beta": "tools-2024-04-04",
         },
         timeout: requestTimeoutMs,
+        signal,
       },
     );
     data = response.data;
@@ -1017,13 +1047,15 @@ async function callAnthropicWithRetries(
   config?: AnthropicAIConfig,
   retries: number = 5,
   requestTimeoutMs: number = 120_000,
+  signal?: AbortSignal,
 ): Promise<ParsedResponseMessage> {
   return withRetries(
     id,
     "Anthropic",
-    () => callAnthropic(id, payload, config, requestTimeoutMs),
+    () => callAnthropic(id, payload, config, requestTimeoutMs, signal),
     {
       retries,
+      signal,
     },
   );
 }
@@ -1178,6 +1210,7 @@ async function callGoogleAI(
   id: Identifier,
   payload: GoogleAIPayload,
   requestTimeoutMs: number = 120_000,
+  signal?: AbortSignal,
 ): Promise<ParsedResponseMessage> {
   const contents = jigGoogleMessages(payload.messages);
 
@@ -1207,6 +1240,7 @@ async function callGoogleAI(
           "x-goog-api-key": process.env.GEMINI_API_KEY as string,
         },
         timeout: requestTimeoutMs,
+        signal,
       },
     );
     response = httpResponse.data;
@@ -1342,11 +1376,13 @@ async function callGoogleAIWithRetries(
   payload: GoogleAIPayload,
   retries: number = 5,
   requestTimeoutMs: number = 120_000,
+  signal?: AbortSignal,
 ): Promise<ParsedResponseMessage> {
   let hasTriedWithoutImages = false;
 
-  return withRetries(id, "Google AI", () => callGoogleAI(id, payload, requestTimeoutMs), {
+  return withRetries(id, "Google AI", () => callGoogleAI(id, payload, requestTimeoutMs, signal), {
     retries,
+    signal,
     onError: (error, attempt) => {
       const errorDetails: Record<string, any> = {
         message: error.message,
@@ -1518,6 +1554,7 @@ async function callGroq(
   id: Identifier,
   payload: GroqPayload,
   requestTimeoutMs: number = 120_000,
+  signal?: AbortSignal,
 ): Promise<ParsedResponseMessage> {
   const response = await axios.post(
     "https://api.groq.com/openai/v1/chat/completions",
@@ -1528,6 +1565,7 @@ async function callGroq(
         Authorization: `Bearer ${process.env.GROQ_API_KEY}`,
       },
       timeout: requestTimeoutMs,
+      signal,
     },
   );
 
@@ -1594,9 +1632,11 @@ async function callGroqWithRetries(
   payload: GroqPayload,
   retries: number = 5,
   requestTimeoutMs: number = 120_000,
+  signal?: AbortSignal,
 ): Promise<ParsedResponseMessage> {
-  return withRetries(id, "Groq", () => callGroq(id, payload, requestTimeoutMs), {
+  return withRetries(id, "Groq", () => callGroq(id, payload, requestTimeoutMs, signal), {
     retries,
+    signal,
   });
 }
 
@@ -1715,6 +1755,7 @@ async function callOpenRouter(
   id: Identifier,
   payload: OpenRouterPayload,
   requestTimeoutMs: number = 120_000,
+  signal?: AbortSignal,
 ): Promise<ParsedResponseMessage> {
   const response = await axios.post(
     "https://openrouter.ai/api/v1/chat/completions",
@@ -1725,6 +1766,7 @@ async function callOpenRouter(
         Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
       },
       timeout: requestTimeoutMs,
+      signal,
     },
   );
 
@@ -1811,12 +1853,13 @@ async function callOpenRouterWithRetries(
   payload: OpenRouterPayload,
   retries: number = 5,
   requestTimeoutMs: number = 120_000,
+  signal?: AbortSignal,
 ): Promise<ParsedResponseMessage> {
   return withRetries(
     id,
     "OpenRouter",
-    () => callOpenRouter(id, payload, requestTimeoutMs),
-    { retries },
+    () => callOpenRouter(id, payload, requestTimeoutMs, signal),
+    { retries, signal },
   );
 }
 
@@ -1889,6 +1932,7 @@ export async function callWithRetries(
     // Per-attempt HTTP timeout, honored by every adapter. Default applied once
     // here so all providers share it; callers override via payload.requestTimeoutMs.
     const requestTimeoutMs = aiPayload.requestTimeoutMs ?? 120_000;
+    const signal = aiPayload.signal;
 
     switch (provider) {
       case "anthropic":
@@ -1898,6 +1942,7 @@ export async function callWithRetries(
           aiConfig as AnthropicAIConfig,
           retries,
           requestTimeoutMs,
+          signal,
         );
 
       case "openai":
@@ -1908,6 +1953,7 @@ export async function callWithRetries(
           retries,
           chunkTimeoutMs,
           requestTimeoutMs,
+          signal,
         );
 
       case "groq":
@@ -1916,6 +1962,7 @@ export async function callWithRetries(
           prepareGroqPayload(routingPayload),
           retries,
           requestTimeoutMs,
+          signal,
         );
 
       case "google":
@@ -1924,6 +1971,7 @@ export async function callWithRetries(
           await prepareGoogleAIPayload(id, routingPayload),
           retries,
           requestTimeoutMs,
+          signal,
         );
 
       case "openrouter":
@@ -1932,9 +1980,12 @@ export async function callWithRetries(
           prepareOpenRouterPayload(routingPayload),
           retries,
           requestTimeoutMs,
+          signal,
         );
     }
   } catch (error) {
+    // Caller cancelled — reject immediately, never fall back to another model.
+    if (aiPayload.signal?.aborted) throw error;
     if (aiPayload.fallbackModel) {
       logger.error(
         id,

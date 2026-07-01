@@ -273,6 +273,11 @@ Main function to make requests to any supported AI provider.
 - `retries`: `number` - Number of retry attempts (default: 5)
 - `chunkTimeoutMs`: `number` - Timeout for streaming chunks in ms (default: 15000)
 
+Two optional per-request knobs live on `payload` (`GenericPayload`):
+
+- `payload.requestTimeoutMs`: `number` - Per-attempt HTTP timeout in ms (default: 120000), honored by every adapter.
+- `payload.signal`: `AbortSignal` - Caller-supplied cancellation. When it aborts, the in-flight provider request is cancelled and `callWithRetries` **rejects immediately — it does not retry or fall back** (both the retry loop and the fallback branch bail on `signal.aborted`). Threaded to the underlying fetch/axios/SDK call of each provider.
+
 #### Returns
 
 `Promise<ParsedResponseMessage>`:
