@@ -171,6 +171,39 @@ describe("OpenAI-compatible serialization (OpenRouter / Groq)", () => {
     ]);
   });
 
+  test("foreign reasoning blocks are dropped (Anthropic history → OpenRouter)", async () => {
+    // Reverse of the Anthropic case: native thinking blocks captured from
+    // Anthropic must not ride reasoning_details to an OpenAI-compat provider.
+    await callWithRetries(["test", "oai-compat-foreign-reasoning"], {
+      model: "openrouter:deepseek/deepseek-v4-flash",
+      messages: toolMessages({
+        reasoningDetails: [
+          { type: "thinking", thinking: "native", signature: "sig123" },
+        ],
+      }),
+      functions: FUNCTIONS,
+    });
+    const body = mockedPost.mock.calls[0][1];
+    expect(body.messages[1]).not.toHaveProperty("reasoning_details");
+  });
+
+  test("mixed reasoningDetails keeps only reasoning.* blocks", async () => {
+    await callWithRetries(["test", "oai-compat-mixed-reasoning"], {
+      model: "openrouter:deepseek/deepseek-v4-flash",
+      messages: toolMessages({
+        reasoningDetails: [
+          { type: "thinking", thinking: "native", signature: "sig123" },
+          { type: "reasoning.text", text: "kept" },
+        ],
+      }),
+      functions: FUNCTIONS,
+    });
+    const body = mockedPost.mock.calls[0][1];
+    expect(body.messages[1].reasoning_details).toEqual([
+      { type: "reasoning.text", text: "kept" },
+    ]);
+  });
+
   test("reasoning is NOT injected when the caller omits it", async () => {
     await callWithRetries(["test", "no-reasoning"], {
       model: "openrouter:deepseek/deepseek-v4-flash",
@@ -227,6 +260,52 @@ describe("Anthropic serialization", () => {
         },
       ],
     });
+  });
+
+  test("foreign reasoning blocks are dropped (OpenRouter history → Anthropic fallback)", async () => {
+    // Prod repro: deepseek (OpenRouter) turns carry `reasoning.text` blocks in
+    // reasoningDetails; when the loop falls back to Anthropic mid-conversation,
+    // replaying them verbatim 400s ("Input tag 'reasoning.text' ... does not
+    // match any of the expected tags").
+    await callWithRetries(["test", "anthropic-foreign-reasoning"], {
+      model: "anthropic:claude-haiku-4-5",
+      messages: toolMessages({
+        reasoning: "Let me check the weather.",
+        reasoningDetails: [
+          { type: "reasoning.text", text: "thinking", format: "unknown" },
+        ],
+      }),
+      functions: FUNCTIONS,
+    });
+    const msgs = mockedPost.mock.calls[0][1].messages;
+    const assistant = msgs.find((m: any) => m.role === "assistant");
+    expect(
+      assistant.content.filter((b: any) => b.type?.startsWith("reasoning")),
+    ).toEqual([]);
+    // the turn is still a valid tool-call turn
+    expect(assistant.content[assistant.content.length - 1].type).toBe(
+      "tool_use",
+    );
+  });
+
+  test("mixed reasoningDetails keeps only thinking/redacted_thinking", async () => {
+    await callWithRetries(["test", "anthropic-mixed-reasoning"], {
+      model: "anthropic:claude-haiku-4-5",
+      messages: toolMessages({
+        reasoningDetails: [
+          { type: "reasoning.text", text: "foreign" },
+          { type: "thinking", thinking: "native", signature: "sig123" },
+          { type: "redacted_thinking", data: "opaque" },
+        ],
+      }),
+      functions: FUNCTIONS,
+    });
+    const msgs = mockedPost.mock.calls[0][1].messages;
+    const assistant = msgs.find((m: any) => m.role === "assistant");
+    expect(assistant.content.slice(0, 2)).toEqual([
+      { type: "thinking", thinking: "native", signature: "sig123" },
+      { type: "redacted_thinking", data: "opaque" },
+    ]);
   });
 
   test("parallel calls → one tool_result block per call, all in one user message", async () => {
