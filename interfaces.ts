@@ -143,6 +143,11 @@ export interface GenericMessage {
    * `redacted_thinking` blocks captured in
    * `ParsedResponseMessage.reasoningDetails`). Preserves the signatures /
    * encrypted payloads that providers validate on round-trip.
+   *
+   * Safe to echo regardless of which provider serves the next call: each
+   * serializer keeps only its own provider's block shapes (Anthropic keeps
+   * `thinking`/`redacted_thinking`; OpenAI-compat keeps `reasoning.*`), so a
+   * cross-provider fallback drops foreign blocks instead of 400ing.
    */
   reasoningDetails?: any;
 }

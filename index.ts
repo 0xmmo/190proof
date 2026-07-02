@@ -320,6 +320,21 @@ function buildOpenAIRequestConfig(
   };
 }
 
+/**
+ * Keep only OpenAI-compat `reasoning.*` blocks when echoing reasoning_details.
+ * A cross-provider fallback replays reasoningDetails captured from Anthropic
+ * (`thinking`/`redacted_thinking`), which don't belong in reasoning_details.
+ * Returns undefined when nothing native-shaped remains.
+ */
+function filterOpenAICompatReasoningDetails(details: any): any[] | undefined {
+  if (!Array.isArray(details)) return details || undefined;
+  const blocks = details.filter(
+    (block: any) =>
+      typeof block?.type === "string" && block.type.startsWith("reasoning."),
+  );
+  return blocks.length ? blocks : undefined;
+}
+
 async function prepareOpenAIPayload(
   identifier: Identifier,
   payload: GenericPayload,
@@ -397,8 +412,10 @@ async function prepareOpenAIPayload(
     }
     // Reasoning passthrough — only when the caller supplied it (never injected).
     if (message.reasoning) outMessage.reasoning = message.reasoning;
-    if (message.reasoningDetails)
-      outMessage.reasoning_details = message.reasoningDetails;
+    const reasoningDetails = filterOpenAICompatReasoningDetails(
+      message.reasoningDetails,
+    );
+    if (reasoningDetails) outMessage.reasoning_details = reasoningDetails;
     preparedPayload.messages.push(outMessage);
   }
 
@@ -856,10 +873,17 @@ async function prepareAnthropicPayload(
     }
 
     // Thinking blocks (if the caller echoes them) must lead an assistant turn,
-    // before text; tool_use blocks come last.
+    // before text; tool_use blocks come last. Only Anthropic's own block shapes
+    // survive: a cross-provider fallback replays reasoningDetails captured from
+    // another provider (e.g. OpenRouter `reasoning.text`), and Anthropic 400s
+    // on the unknown input tag.
     const leadingBlocks: AnthropicContentBlock[] =
       message.role === "assistant" && Array.isArray(message.reasoningDetails)
-        ? message.reasoningDetails
+        ? message.reasoningDetails.filter(
+            (block: any) =>
+              block?.type === "thinking" ||
+              block?.type === "redacted_thinking",
+          )
         : [];
     const toolUseBlocks: AnthropicContentBlock[] = (
       message.functionCalls || []
@@ -1526,8 +1550,10 @@ function prepareOpenAICompatMessages(
       if (!message.content) outMessage.content = null;
     }
     if (message.reasoning) outMessage.reasoning = message.reasoning;
-    if (message.reasoningDetails)
-      outMessage.reasoning_details = message.reasoningDetails;
+    const reasoningDetails = filterOpenAICompatReasoningDetails(
+      message.reasoningDetails,
+    );
+    if (reasoningDetails) outMessage.reasoning_details = reasoningDetails;
     out.push(outMessage);
   }
   return out;
