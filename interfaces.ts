@@ -440,6 +440,7 @@ export interface AnthropicAIPayload {
   functions?: any[]; // TODO type this JSON schema
   temperature?: number;
   system?: string;
+  tool_choice?: { type: "none" | "auto" } | { type: "tool"; name: string };
 }
 
 export interface GoogleAITextPart {
@@ -495,6 +496,9 @@ export interface GoogleAIPayload {
   messages: GoogleAIMessage[];
   tools?: {
     functionDeclarations: FunctionDefinition[];
+  };
+  toolConfig?: {
+    functionCallingConfig: { mode: "NONE" | "AUTO" | "ANY" };
   };
   systemInstruction?: string;
 }
