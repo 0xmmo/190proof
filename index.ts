@@ -807,6 +807,14 @@ async function prepareAnthropicPayload(
     messages: [],
     functions: payload.functions,
     temperature: payload.temperature,
+    // Map the generic function_call to Anthropic tool_choice ("none" forces a
+    // text-only turn). Only meaningful alongside tools — callAnthropic sends
+    // it only when tools are present (tool_choice without tools 400s).
+    tool_choice: payload.function_call
+      ? typeof payload.function_call === "string"
+        ? { type: payload.function_call }
+        : { type: "tool", name: payload.function_call.name }
+      : undefined,
   };
 
   for (const message of payload.messages) {
@@ -963,6 +971,8 @@ async function callAnthropic(
         model: payload.model,
         messages: anthropicMessages,
         tools: cachedTools,
+        // tool_choice requires tools in the request; drop it otherwise.
+        tool_choice: cachedTools?.length ? payload.tool_choice : undefined,
         temperature: payload.temperature,
         system: payload.system,
         max_tokens: 4096,
@@ -1144,6 +1154,21 @@ async function prepareGoogleAIPayload(
           })),
         }
       : undefined,
+    // Map the generic function_call to Gemini's functionCallingConfig ("none"
+    // → mode NONE forces a text-only turn). Only meaningful alongside tools.
+    toolConfig:
+      payload.functions && payload.function_call
+        ? {
+            functionCallingConfig: {
+              mode:
+                typeof payload.function_call === "string"
+                  ? payload.function_call === "none"
+                    ? "NONE"
+                    : "AUTO"
+                  : "ANY",
+            },
+          }
+        : undefined,
   };
 
   // id -> tool name, to backfill functionResponse.name when a caller omits it.
@@ -1247,6 +1272,9 @@ async function callGoogleAI(
     generationConfig: { responseModalities: ["TEXT"] },
   };
   if (payload.tools) requestBody.tools = [payload.tools];
+  if (payload.tools && payload.toolConfig) {
+    requestBody.toolConfig = payload.toolConfig;
+  }
   if (payload.systemInstruction) {
     requestBody.systemInstruction = {
       parts: [{ text: payload.systemInstruction }],
