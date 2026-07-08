@@ -1,6 +1,6 @@
 # 190proof
 
-A unified interface for interacting with multiple AI providers including **OpenAI**, **Anthropic**, **Google**, **Groq**, **OpenRouter**, and **AWS Bedrock**. This package provides a consistent API for making requests to different LLM providers while handling retries, streaming, and multimodal inputs.
+An opinionated unified interface for interacting with multiple AI providers including **OpenAI**, **Anthropic**, **Google**, **Groq**, **OpenRouter**, and **AWS Bedrock**. This package provides a consistent API for making requests to different LLM providers while handling retries, streaming, and multimodal inputs.
 
 ## Features
 
