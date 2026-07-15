@@ -289,6 +289,10 @@ interface ParsedResponseMessage {
   function_call: FunctionCall | null;
   function_calls: FunctionCall[];
   files: File[]; // For models that return files (e.g., image generation)
+  // Who actually served the response: OpenRouter's upstream provider from the
+  // response body (e.g. "Baidu"), or the SDK provider name ("anthropic", ...)
+  // for direct providers. On fallback, reflects the model that answered.
+  provider?: string;
   usage: {
     prompt_tokens: number;
     completion_tokens: number;

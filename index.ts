@@ -1890,6 +1890,9 @@ async function callOpenRouter(
     files: [],
     reasoning: answer.reasoning ?? undefined,
     reasoningDetails: answer.reasoning_details ?? undefined,
+    // The upstream provider OpenRouter routed to (e.g. "Baidu") — finer-grained
+    // than the "openrouter" stamp callWithRetries would apply.
+    provider: response.data.provider ?? undefined,
     usage: response.data.usage
       ? {
           prompt_tokens: response.data.usage.prompt_tokens,
@@ -1988,9 +1991,10 @@ export async function callWithRetries(
     const requestTimeoutMs = aiPayload.requestTimeoutMs ?? 120_000;
     const signal = aiPayload.signal;
 
+    let result: ParsedResponseMessage;
     switch (provider) {
       case "anthropic":
-        return await callAnthropicWithRetries(
+        result = await callAnthropicWithRetries(
           id,
           await prepareAnthropicPayload(id, routingPayload),
           aiConfig as AnthropicAIConfig,
@@ -1998,9 +2002,10 @@ export async function callWithRetries(
           requestTimeoutMs,
           signal,
         );
+        break;
 
       case "openai":
-        return await callOpenAiWithRetries(
+        result = await callOpenAiWithRetries(
           id,
           await prepareOpenAIPayload(id, routingPayload),
           aiConfig as OpenAIConfig,
@@ -2009,34 +2014,46 @@ export async function callWithRetries(
           requestTimeoutMs,
           signal,
         );
+        break;
 
       case "groq":
-        return await callGroqWithRetries(
+        result = await callGroqWithRetries(
           id,
           prepareGroqPayload(routingPayload),
           retries,
           requestTimeoutMs,
           signal,
         );
+        break;
 
       case "google":
-        return await callGoogleAIWithRetries(
+        result = await callGoogleAIWithRetries(
           id,
           await prepareGoogleAIPayload(id, routingPayload),
           retries,
           requestTimeoutMs,
           signal,
         );
+        break;
 
       case "openrouter":
-        return await callOpenRouterWithRetries(
+        result = await callOpenRouterWithRetries(
           id,
           prepareOpenRouterPayload(routingPayload),
           retries,
           requestTimeoutMs,
           signal,
         );
+        break;
     }
+
+    // Attribution stamp: adapters that know the actual serving provider set it
+    // themselves (OpenRouter returns the upstream provider it routed to); for
+    // the rest, the SDK provider name is the answer. Because fallback recurses
+    // through callWithRetries, the stamp always comes from the invocation whose
+    // model actually answered.
+    result.provider ??= provider;
+    return result;
   } catch (error) {
     // Caller cancelled — reject immediately, never fall back to another model.
     if (aiPayload.signal?.aborted) throw error;

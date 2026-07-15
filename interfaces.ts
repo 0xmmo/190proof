@@ -314,6 +314,15 @@ export interface ParsedResponseMessage {
    * validate. Undefined when the model/provider returns none.
    */
   reasoningDetails?: any;
+  /**
+   * Who actually served the response. For OpenRouter this is the upstream
+   * provider from the response body (e.g. "Baidu", "Morph") — the routing
+   * decision OpenRouter made, not the requested model slug. For direct
+   * providers it's the SDK provider name ("anthropic", "openai", "google",
+   * "groq"). On model fallback it reflects the model that answered, so a
+   * mismatch with the requested model's provider reveals the fallback.
+   */
+  provider?: string;
   usage: {
     prompt_tokens: number;
     completion_tokens: number;
