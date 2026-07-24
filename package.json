@@ -25,11 +25,9 @@
   },
   "dependencies": {
     "@aws-sdk/client-bedrock-runtime": "^3.716.0",
-    "@google/genai": "^0.6.1",
-    "@google/generative-ai": "^0.11.1",
     "axios": "^1.7.9",
     "heic-decode": "^2.0.0",
-    "sharp": "^0.33.3",
+    "sharp": "^0.35.3",
     "ws": "^8.18.0"
   }
 }
