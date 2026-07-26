@@ -71,6 +71,37 @@ function anySignal(signals: AbortSignal[]): AbortSignal {
 }
 
 /**
+ * Run an axios-based provider call under a wall-clock deadline. Axios's
+ * `timeout` option is a socket *idle* timer — providers that dribble
+ * keep-alive bytes while a long generation runs (OpenRouter does this
+ * explicitly) reset it forever, so a stuck upstream holds the request open
+ * until the caller's walltime kills the whole turn (2026-07-26: a 9.7-minute
+ * OpenRouter call with requestTimeoutMs=120s "set"). AbortSignal.timeout
+ * bounds elapsed time instead; the idle `timeout` stays as a faster trigger
+ * for fully dead sockets.
+ */
+async function withRequestDeadline<T>(
+  apiName: string,
+  requestTimeoutMs: number,
+  signal: AbortSignal | undefined,
+  fn: (mergedSignal: AbortSignal) => Promise<T>,
+): Promise<T> {
+  const deadline = AbortSignal.timeout(requestTimeoutMs);
+  try {
+    return await fn(signal ? anySignal([signal, deadline]) : deadline);
+  } catch (error) {
+    // Axios surfaces any abort as a bare "canceled" — restore the real reason
+    // so retry logs and model-facing errors say what actually happened.
+    if (deadline.aborted && !signal?.aborted) {
+      throw new Error(
+        `${apiName} request exceeded hard deadline of ${requestTimeoutMs}ms`,
+      );
+    }
+    throw error;
+  }
+}
+
+/**
  * Generic retry wrapper for API calls with exponential backoff.
  */
 async function withRetries<T>(
@@ -965,28 +996,34 @@ async function callAnthropic(
           { ...tools[tools.length - 1], cache_control: { type: "ephemeral" } },
         ]
       : tools;
-    const response = await axios.post(
-      "https://api.anthropic.com/v1/messages",
-      {
-        model: payload.model,
-        messages: anthropicMessages,
-        tools: cachedTools,
-        // tool_choice requires tools in the request; drop it otherwise.
-        tool_choice: cachedTools?.length ? payload.tool_choice : undefined,
-        temperature: payload.temperature,
-        system: payload.system,
-        max_tokens: 4096,
-      },
-      {
-        headers: {
-          "content-type": "application/json",
-          "x-api-key": process.env.ANTHROPIC_API_KEY as string,
-          "anthropic-version": "2023-06-01",
-          "anthropic-beta": "tools-2024-04-04",
-        },
-        timeout: requestTimeoutMs,
-        signal,
-      },
+    const response = await withRequestDeadline(
+      "Anthropic",
+      requestTimeoutMs,
+      signal,
+      (mergedSignal) =>
+        axios.post(
+          "https://api.anthropic.com/v1/messages",
+          {
+            model: payload.model,
+            messages: anthropicMessages,
+            tools: cachedTools,
+            // tool_choice requires tools in the request; drop it otherwise.
+            tool_choice: cachedTools?.length ? payload.tool_choice : undefined,
+            temperature: payload.temperature,
+            system: payload.system,
+            max_tokens: 4096,
+          },
+          {
+            headers: {
+              "content-type": "application/json",
+              "x-api-key": process.env.ANTHROPIC_API_KEY as string,
+              "anthropic-version": "2023-06-01",
+              "anthropic-beta": "tools-2024-04-04",
+            },
+            timeout: requestTimeoutMs,
+            signal: mergedSignal,
+          },
+        ),
     );
     data = response.data;
   }
@@ -1283,17 +1320,23 @@ async function callGoogleAI(
 
   let response: any;
   try {
-    const httpResponse = await axios.post(
-      `https://generativelanguage.googleapis.com/v1beta/models/${payload.model}:generateContent`,
-      requestBody,
-      {
-        headers: {
-          "content-type": "application/json",
-          "x-goog-api-key": process.env.GEMINI_API_KEY as string,
-        },
-        timeout: requestTimeoutMs,
-        signal,
-      },
+    const httpResponse = await withRequestDeadline(
+      "Google AI",
+      requestTimeoutMs,
+      signal,
+      (mergedSignal) =>
+        axios.post(
+          `https://generativelanguage.googleapis.com/v1beta/models/${payload.model}:generateContent`,
+          requestBody,
+          {
+            headers: {
+              "content-type": "application/json",
+              "x-goog-api-key": process.env.GEMINI_API_KEY as string,
+            },
+            timeout: requestTimeoutMs,
+            signal: mergedSignal,
+          },
+        ),
     );
     response = httpResponse.data;
   } catch (err: any) {
@@ -1610,17 +1653,23 @@ async function callGroq(
   requestTimeoutMs: number = 120_000,
   signal?: AbortSignal,
 ): Promise<ParsedResponseMessage> {
-  const response = await axios.post(
-    "https://api.groq.com/openai/v1/chat/completions",
-    payload,
-    {
-      headers: {
-        "content-type": "application/json",
-        Authorization: `Bearer ${process.env.GROQ_API_KEY}`,
-      },
-      timeout: requestTimeoutMs,
-      signal,
-    },
+  const response = await withRequestDeadline(
+    "Groq",
+    requestTimeoutMs,
+    signal,
+    (mergedSignal) =>
+      axios.post(
+        "https://api.groq.com/openai/v1/chat/completions",
+        payload,
+        {
+          headers: {
+            "content-type": "application/json",
+            Authorization: `Bearer ${process.env.GROQ_API_KEY}`,
+          },
+          timeout: requestTimeoutMs,
+          signal: mergedSignal,
+        },
+      ),
   );
 
   // Like OpenRouter, Groq can return an error-shaped HTTP 200 with no `choices`
@@ -1811,17 +1860,24 @@ async function callOpenRouter(
   requestTimeoutMs: number = 120_000,
   signal?: AbortSignal,
 ): Promise<ParsedResponseMessage> {
-  const response = await axios.post(
-    "https://openrouter.ai/api/v1/chat/completions",
-    payload,
-    {
-      headers: {
-        "content-type": "application/json",
-        Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
-      },
-      timeout: requestTimeoutMs,
-      signal,
-    },
+  const response = await withRequestDeadline(
+    "OpenRouter",
+    requestTimeoutMs,
+    signal,
+    (mergedSignal) =>
+      axios.post(
+        // Override point for tests (deadline behavior needs a local server).
+        `${process.env.OPENROUTER_BASE_URL || "https://openrouter.ai"}/api/v1/chat/completions`,
+        payload,
+        {
+          headers: {
+            "content-type": "application/json",
+            Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
+          },
+          timeout: requestTimeoutMs,
+          signal: mergedSignal,
+        },
+      ),
   );
 
   // OpenRouter wraps upstream provider failures (rate limits, moderation,
