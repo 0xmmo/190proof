@@ -2212,7 +2212,11 @@ function parseOpenRouterBody(id: Identifier, data: any): ParsedResponseMessage {
   // hides the real reason. (Mirrors the OpenAI non-streaming guard above.)
   if (data.error) {
     logger.error(id, "OpenRouter error:", data.error);
-    throw new Error(`OpenRouter error: ${data.error.message}`);
+    const error = new Error(`OpenRouter error: ${data.error.message}`) as any;
+    // Carry the raw error body (as the stream path does) so the retry loop can
+    // classify it — moderation eviction needs code/metadata, not just message.
+    error.data = data.error;
+    throw error;
   }
 
   const answer = data.choices?.[0]?.message;
@@ -2261,6 +2265,60 @@ async function callOpenRouterNonStreaming(
   return parseOpenRouterBody(id, response.data);
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Moderation eviction
+// ─────────────────────────────────────────────────────────────────────────────
+// A provider's content-moderation rejection ("Upstream error from Alibaba:
+// Output data may contain inappropriate content.") is deterministic for a
+// given payload — re-rolling the same provider burns the whole retry budget
+// for nothing (observed 2026-07-27: 5 identical rejections per turn, ~20-25s
+// of user-visible stall, before fallbackModel saved the turn). On the FIRST
+// moderation-classified error, evict the refusing provider from the request's
+// provider preferences (ignore += provider, order -= provider) so every
+// remaining attempt reroutes; OpenRouter's next-ranked provider answers
+// instead. Non-moderation errors keep plain retry semantics.
+
+/** "AtlasCloud" / "atlas-cloud/fp4" / "Atlas Cloud" → "atlascloud" */
+const normalizeProviderKey = (name: string) =>
+  name.split("/")[0].toLowerCase().replace(/[^a-z0-9]/g, "");
+
+const MODERATION_RE =
+  /moderat|inappropriate content|content polic|content management|flagged/i;
+
+/**
+ * If `error` is a provider content-moderation rejection, return the refusing
+ * provider's slug (in the payload's own `order` spelling when possible, since
+ * OpenRouter's `ignore` wants slugs, not the display name error metadata
+ * carries). Null for everything else.
+ */
+function moderationEvictionSlug(
+  error: any,
+  payload: OpenRouterPayload,
+): string | null {
+  const body = error?.data ?? error?.response?.data?.error;
+  if (!body) return null;
+  const message = String(body.message ?? "");
+  const isModeration =
+    body.code === 403 ||
+    Array.isArray(body.metadata?.reasons) ||
+    MODERATION_RE.test(message);
+  if (!isModeration) return null;
+
+  const display: string | undefined =
+    body.metadata?.provider_name ??
+    /Upstream error from ([^:]+):/.exec(message)?.[1];
+  if (!display) return null;
+
+  const key = normalizeProviderKey(display);
+  const fromOrder = payload.provider?.order?.find(
+    (entry) => normalizeProviderKey(entry) === key,
+  );
+  // Best effort when the provider wasn't in our order (OpenRouter default
+  // routing): lowercased display name matches the slug for single-word
+  // providers (alibaba, novita, baidu), which covers the observed cases.
+  return fromOrder ? fromOrder.split("/")[0] : display.toLowerCase();
+}
+
 interface OpenRouterCallOptions {
   streaming: boolean;
   streamTimeoutMs: number;
@@ -2275,11 +2333,12 @@ async function callOpenRouterWithRetries(
   options: OpenRouterCallOptions,
   signal?: AbortSignal,
 ): Promise<ParsedResponseMessage> {
+  const evicted: string[] = [];
   return withRetries(
     id,
     "OpenRouter",
     () =>
-      options.streaming
+      (options.streaming
         ? callOpenRouterStream(
             id,
             payload,
@@ -2292,7 +2351,27 @@ async function callOpenRouterWithRetries(
             payload,
             options.requestTimeoutMs,
             signal,
-          ),
+          )
+      ).catch((error) => {
+        const slug = moderationEvictionSlug(error, payload);
+        if (slug && !evicted.includes(slug)) {
+          evicted.push(slug);
+          // Mutating this attempt-scoped payload is safe: it's built fresh per
+          // callWithRetries invocation and a fallbackModel run rebuilds it.
+          payload.provider = {
+            ...payload.provider,
+            ignore: [...(payload.provider?.ignore ?? []), slug],
+            order: payload.provider?.order?.filter(
+              (entry) => normalizeProviderKey(entry) !== normalizeProviderKey(slug),
+            ),
+          };
+          logger.log(
+            id,
+            `OpenRouter moderation eviction: ignoring provider "${slug}" for remaining attempts`,
+          );
+        }
+        throw error;
+      }),
     { retries, signal },
   );
 }
