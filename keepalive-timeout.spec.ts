@@ -75,7 +75,7 @@ describe("axios timeout vs dribbling keep-alive bytes", () => {
     expect(Date.now() - startedAt).toBeLessThan(3_000);
   });
 
-  it("callWithRetries' OpenRouter path dies at the deadline per attempt, not the walltime", async () => {
+  it("the non-streaming OpenRouter path dies at the deadline per attempt, not the walltime", async () => {
     process.env.OPENROUTER_BASE_URL = baseUrl;
     const startedAt = Date.now();
     try {
@@ -84,6 +84,7 @@ describe("axios timeout vs dribbling keep-alive bytes", () => {
           "deadline-spec",
           {
             model: "openrouter:deepseek/deepseek-v4-flash",
+            streaming: false, // the axios idle-timer bug is non-streaming-specific
             messages: [{ role: "user", content: "hi" }],
             requestTimeoutMs: 400,
           },
@@ -92,6 +93,28 @@ describe("axios timeout vs dribbling keep-alive bytes", () => {
         ),
       ).rejects.toThrow(/hard deadline of 400ms/);
       // 2 attempts x 400ms + retry backoff — nowhere near an unbounded hang.
+      expect(Date.now() - startedAt).toBeLessThan(3_000);
+    } finally {
+      delete process.env.OPENROUTER_BASE_URL;
+    }
+  });
+
+  it("the streaming path kills the same dribble via the useful-chunk stall timer", async () => {
+    process.env.OPENROUTER_BASE_URL = baseUrl;
+    const startedAt = Date.now();
+    try {
+      await expect(
+        callWithRetries(
+          "stall-spec",
+          {
+            model: "openrouter:deepseek/deepseek-v4-flash",
+            messages: [{ role: "user", content: "hi" }],
+          },
+          undefined,
+          2,
+          400, // chunkTimeoutMs — dribbled bytes are not useful chunks
+        ),
+      ).rejects.toThrow(/no useful chunk for 400ms/);
       expect(Date.now() - startedAt).toBeLessThan(3_000);
     } finally {
       delete process.env.OPENROUTER_BASE_URL;

@@ -118,6 +118,7 @@ describe("OpenAI-compatible serialization (OpenRouter / Groq)", () => {
   ])("%s: assistant tool_calls + tool message", async (_name, model) => {
     const payload: GenericPayload = {
       model,
+      streaming: false, // axios is what is mocked here — pin the non-streaming transport
       messages: toolMessages({
         reasoning: "Let me check the weather.",
         reasoningDetails: [{ type: "reasoning.text", text: "thinking" }],
@@ -156,6 +157,7 @@ describe("OpenAI-compatible serialization (OpenRouter / Groq)", () => {
   test("OpenRouter: parallel calls → one tool message per result", async () => {
     await callWithRetries(["test", "parallel"], {
       model: "openrouter:deepseek/deepseek-v4-flash",
+  streaming: false, // axios is what is mocked here — pin the non-streaming transport
       messages: parallelToolMessages(),
       functions: FUNCTIONS,
     });
@@ -176,6 +178,7 @@ describe("OpenAI-compatible serialization (OpenRouter / Groq)", () => {
     // Anthropic must not ride reasoning_details to an OpenAI-compat provider.
     await callWithRetries(["test", "oai-compat-foreign-reasoning"], {
       model: "openrouter:deepseek/deepseek-v4-flash",
+  streaming: false, // axios is what is mocked here — pin the non-streaming transport
       messages: toolMessages({
         reasoningDetails: [
           { type: "thinking", thinking: "native", signature: "sig123" },
@@ -190,6 +193,7 @@ describe("OpenAI-compatible serialization (OpenRouter / Groq)", () => {
   test("mixed reasoningDetails keeps only reasoning.* blocks", async () => {
     await callWithRetries(["test", "oai-compat-mixed-reasoning"], {
       model: "openrouter:deepseek/deepseek-v4-flash",
+  streaming: false, // axios is what is mocked here — pin the non-streaming transport
       messages: toolMessages({
         reasoningDetails: [
           { type: "thinking", thinking: "native", signature: "sig123" },
@@ -207,6 +211,7 @@ describe("OpenAI-compatible serialization (OpenRouter / Groq)", () => {
   test("reasoning is NOT injected when the caller omits it", async () => {
     await callWithRetries(["test", "no-reasoning"], {
       model: "openrouter:deepseek/deepseek-v4-flash",
+  streaming: false, // axios is what is mocked here — pin the non-streaming transport
       messages: toolMessages(),
       functions: FUNCTIONS,
     });

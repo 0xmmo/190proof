@@ -45,6 +45,7 @@ beforeEach(() => {
 
 const basePayload: GenericPayload = {
   model: "openrouter:deepseek/deepseek-v4-flash",
+  streaming: false, // axios is what is mocked here — pin the non-streaming transport
   messages: [{ role: "user", content: "hi" }],
 };
 

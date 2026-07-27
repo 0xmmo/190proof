@@ -273,9 +273,11 @@ Main function to make requests to any supported AI provider.
 - `retries`: `number` - Number of retry attempts (default: 5)
 - `chunkTimeoutMs`: `number` - Timeout for streaming chunks in ms (default: 15000)
 
-Two optional per-request knobs live on `payload` (`GenericPayload`):
+Optional per-request knobs live on `payload` (`GenericPayload`):
 
-- `payload.requestTimeoutMs`: `number` - Per-attempt HTTP timeout in ms (default: 120000), honored by every adapter.
+- `payload.requestTimeoutMs`: `number` - Per-attempt HTTP timeout in ms (default: 120000), honored by every adapter — except streaming OpenRouter attempts, which it deliberately does NOT bound (see below). For OpenRouter's non-streaming transport the default is 180000.
+- `payload.streaming`: `boolean` - OpenRouter-only (default: true). Streams the completion over SSE. A streaming attempt is bounded by two independent timers instead of `requestTimeoutMs`: `streamTimeoutMs` (total wall clock, default 600000) and the per-useful-chunk stall timeout (`chunkTimeoutMs` argument, default 15000). A chunk is "useful" only if it advances content, reasoning, tool-call fragments, finish_reason, or usage — SSE comment keep-alives (`: OPENROUTER PROCESSING`) and role-only deltas don't reset the stall timer, so a hung provider dies within one stall window while a healthy long generation can run to the total budget. Set `streaming: false` for the old single-JSON-body transport.
+- `payload.streamTimeoutMs`: `number` - OpenRouter-only: total wall-clock budget per streaming attempt (default: 600000).
 - `payload.signal`: `AbortSignal` - Caller-supplied cancellation. When it aborts, the in-flight provider request is cancelled and `callWithRetries` **rejects immediately — it does not retry or fall back** (both the retry loop and the fallback branch bail on `signal.aborted`). Threaded to the underlying fetch/axios/SDK call of each provider.
 
 #### Returns

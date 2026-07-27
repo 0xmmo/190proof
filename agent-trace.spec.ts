@@ -58,6 +58,7 @@ describeIf("real agent trace serialization", () => {
     test("every call is emitted and every result paired to a real call id", async () => {
       await callWithRetries(["trace", "openrouter"], {
         model: "openrouter:deepseek/deepseek-v4-flash",
+  streaming: false, // axios is what is mocked here — pin the non-streaming transport
         messages,
       });
       const body = mockedPost.mock.calls[0][1];

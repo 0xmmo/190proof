@@ -431,6 +431,13 @@ export interface OpenRouterPayload {
     | { type: "function"; function: { name: string } };
   temperature?: number;
   provider?: OpenRouterProviderPreferences;
+  /** Set by the adapter, never by callers: SSE streaming on/off. */
+  stream?: boolean;
+  /**
+   * Set by the adapter on streamed requests: OpenRouter's usage-accounting
+   * flag, which makes the final SSE chunk carry the `usage` object.
+   */
+  usage?: { include: boolean };
 }
 
 export interface OpenAIPayload {
@@ -536,6 +543,24 @@ export interface GenericPayload {
    * valid response isn't cut short.
    */
   requestTimeoutMs?: number;
+  /**
+   * OpenRouter-only: stream the completion over SSE instead of waiting for a
+   * single JSON body. Defaults to true. Streaming attempts are bounded by
+   * `streamTimeoutMs` (total) plus a per-useful-chunk stall timeout — NOT by
+   * `requestTimeoutMs`, which only governs non-streaming attempts (default
+   * 180s for OpenRouter). Set to false to force the old non-streaming path.
+   */
+  streaming?: boolean;
+  /**
+   * OpenRouter-only: total wall-clock budget in ms for one streaming attempt
+   * (connect + full generation). Defaults to 600s. Independent of
+   * `requestTimeoutMs` by design: a healthy long generation keeps streaming
+   * useful chunks and may run far past any sane non-streaming deadline, while
+   * a hung one is killed much earlier by the per-useful-chunk stall timeout
+   * (`chunkTimeoutMs` argument of `callWithRetries`, default 15s — reset only
+   * by chunks that advance the output, never by keep-alive bytes/comments).
+   */
+  streamTimeoutMs?: number;
   /**
    * Optional caller-supplied cancellation signal. When it aborts, the in-flight
    * provider request is cancelled and `callWithRetries` rejects immediately —

@@ -1854,64 +1854,59 @@ function parseDsmlToolCalls(content: string): {
   return { calls, remainingContent: remaining.length ? remaining : null };
 }
 
-async function callOpenRouter(
+// Independent timeout budgets for the two OpenRouter transports. Streaming is
+// bounded by elapsed total + a per-useful-chunk stall timeout, so it can afford
+// a generous total: a healthy long generation keeps producing useful chunks,
+// while a hung one dies within one stall window. Non-streaming has no
+// progress signal at all, so its total must stay tight.
+export const OPENROUTER_STREAM_TIMEOUT_MS = 600_000;
+export const OPENROUTER_NONSTREAM_TIMEOUT_MS = 180_000;
+
+function openRouterEndpoint(): string {
+  // Override point for tests (deadline/stream behavior needs a local server).
+  return `${process.env.OPENROUTER_BASE_URL || "https://openrouter.ai"}/api/v1/chat/completions`;
+}
+
+/**
+ * Shared tail of both OpenRouter transports: assemble the ParsedResponseMessage
+ * from the raw pieces, recover DSML tool calls, and reject unusable (empty /
+ * truncated-markup) completions so withRetries retries and callWithRetries can
+ * fall back.
+ */
+function finalizeOpenRouterMessage(
   id: Identifier,
-  payload: OpenRouterPayload,
-  requestTimeoutMs: number = 120_000,
-  signal?: AbortSignal,
-): Promise<ParsedResponseMessage> {
-  const response = await withRequestDeadline(
-    "OpenRouter",
-    requestTimeoutMs,
-    signal,
-    (mergedSignal) =>
-      axios.post(
-        // Override point for tests (deadline behavior needs a local server).
-        `${process.env.OPENROUTER_BASE_URL || "https://openrouter.ai"}/api/v1/chat/completions`,
-        payload,
-        {
-          headers: {
-            "content-type": "application/json",
-            Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
-          },
-          timeout: requestTimeoutMs,
-          signal: mergedSignal,
-        },
-      ),
-  );
-
-  // OpenRouter wraps upstream provider failures (rate limits, moderation,
-  // model-unavailable) in an HTTP 200 whose body is `{ error: {...} }` with no
-  // `choices` key. Surface that error instead of letting `choices[0]` throw a
-  // cryptic "Cannot read properties of undefined (reading '0')" TypeError that
-  // hides the real reason. (Mirrors the OpenAI non-streaming guard above.)
-  if (response.data.error) {
-    logger.error(id, "OpenRouter error:", response.data.error);
-    throw new Error(`OpenRouter error: ${response.data.error.message}`);
-  }
-
-  const answer = response.data.choices?.[0]?.message;
-  if (!answer) {
-    logger.error(id, "Missing answer in OpenRouter API response:", response.data);
-    throw new Error("Missing answer in OpenRouter API");
-  }
-
+  raw: {
+    content: string | null;
+    toolCalls: { id?: string; name: string; argumentsJson: string }[];
+    reasoning?: string;
+    reasoningDetails?: any;
+    provider?: string;
+    usage?: {
+      prompt_tokens: number;
+      completion_tokens: number;
+      total_tokens: number;
+      prompt_tokens_details?: { cached_tokens?: number };
+    } | null;
+    /** Whole response (or a summary of the stream) for the failure log. */
+    forLog: () => string;
+  },
+): ParsedResponseMessage {
   const functionCalls: FunctionCall[] = [];
-  if (answer.tool_calls?.length) {
-    for (let i = 0; i < answer.tool_calls.length; i++) {
-      const tc = answer.tool_calls[i];
-      functionCalls.push({
-        id: tc.id ?? `call_${i}`,
-        name: tc.function.name,
-        arguments: JSON.parse(tc.function.arguments),
-      });
-    }
+  for (let i = 0; i < raw.toolCalls.length; i++) {
+    const tc = raw.toolCalls[i];
+    if (!tc.name) continue;
+    functionCalls.push({
+      id: tc.id ?? `call_${i}`,
+      name: tc.name,
+      // Streamed no-arg calls can close with an empty fragment; treat as {}.
+      arguments: tc.argumentsJson.trim() ? JSON.parse(tc.argumentsJson) : {},
+    });
   }
 
   // DeepSeek sometimes emits its native "DSML" tool-call markup as plain content
   // instead of populating tool_calls. Recover it into structured calls so the
   // turn executes normally instead of leaking raw markup to the caller.
-  let content: string | null = answer.content ?? null;
+  let content = raw.content;
   if (!functionCalls.length && content && DSML_ENVELOPE_RE.test(content)) {
     const { calls, remainingContent } = parseDsmlToolCalls(content);
     if (calls.length) {
@@ -1924,15 +1919,10 @@ async function callOpenRouter(
   // can route all output to the discarded `reasoning` channel), OR a DSML
   // envelope we couldn't parse into a call (truncated/malformed). Throw so
   // withRetries retries this model and, on exhaustion, callWithRetries falls
-  // back to fallbackModel. (Mirrors the streaming path's guard in
-  // parseStreamedResponse.)
+  // back to fallbackModel.
   const hasUnparsedDsml = !!content && DSML_DELIMITER_RE.test(content);
   if (!functionCalls.length && (!content || hasUnparsedDsml)) {
-    logger.error(
-      id,
-      "OpenRouter: empty or unparseable completion:",
-      JSON.stringify(response.data),
-    );
+    logger.error(id, "OpenRouter: empty or unparseable completion:", raw.forLog());
     throw new Error(
       "OpenRouter: received message without usable content or function_call",
     );
@@ -1944,34 +1934,365 @@ async function callOpenRouter(
     function_call: functionCalls[0] || null,
     function_calls: functionCalls,
     files: [],
-    reasoning: answer.reasoning ?? undefined,
-    reasoningDetails: answer.reasoning_details ?? undefined,
+    reasoning: raw.reasoning || undefined,
+    reasoningDetails: raw.reasoningDetails ?? undefined,
     // The upstream provider OpenRouter routed to (e.g. "Baidu") — finer-grained
     // than the "openrouter" stamp callWithRetries would apply.
-    provider: response.data.provider ?? undefined,
-    usage: response.data.usage
+    provider: raw.provider ?? undefined,
+    usage: raw.usage
       ? {
-          prompt_tokens: response.data.usage.prompt_tokens,
-          completion_tokens: response.data.usage.completion_tokens,
-          total_tokens: response.data.usage.total_tokens,
-          cached_tokens:
-            response.data.usage.prompt_tokens_details?.cached_tokens ?? 0,
+          prompt_tokens: raw.usage.prompt_tokens,
+          completion_tokens: raw.usage.completion_tokens,
+          total_tokens: raw.usage.total_tokens,
+          cached_tokens: raw.usage.prompt_tokens_details?.cached_tokens ?? 0,
         }
       : null,
   };
+}
+
+/**
+ * Streaming transport (the default). Two timers, both required:
+ *
+ * - `streamTimeoutMs` bounds the whole attempt (connect + generation). It is
+ *   deliberately independent of the non-streaming `requestTimeoutMs`: with a
+ *   progress signal available, a long healthy generation shouldn't be killed
+ *   by a deadline sized for opaque requests (2026-07-27: 9–12k-token deepseek
+ *   completions at healthy tps were being executed at the 120s hard deadline
+ *   just before finishing, then retried from scratch).
+ * - `chunkTimeoutMs` is a stall detector: it resets ONLY on a "useful" chunk —
+ *   one advancing content, reasoning, reasoning_details, tool-call fragments,
+ *   finish_reason, or usage. SSE comments (OpenRouter dribbles
+ *   ": OPENROUTER PROCESSING" as keep-alive), role-only deltas, and other
+ *   heartbeat noise do NOT reset it, so a provider that keeps the socket warm
+ *   while generating nothing dies within one window instead of holding the
+ *   turn to the total deadline. The window also covers connect + time to first
+ *   token.
+ */
+async function callOpenRouterStream(
+  id: Identifier,
+  payload: OpenRouterPayload,
+  streamTimeoutMs: number = OPENROUTER_STREAM_TIMEOUT_MS,
+  chunkTimeoutMs: number = 15_000,
+  signal?: AbortSignal,
+): Promise<ParsedResponseMessage> {
+  const controller = new AbortController();
+  // Why the reason is tracked out-of-band: fetch/reader surface any abort as a
+  // bare AbortError, so without this the retry log would say "This operation
+  // was aborted" no matter which timer fired.
+  let abortReason: string | null = null;
+  const abortWith = (reason: string) => {
+    abortReason = reason;
+    controller.abort();
+  };
+
+  const unref = (t: ReturnType<typeof setTimeout>) => {
+    if (typeof t === "object" && "unref" in t) t.unref();
+    return t;
+  };
+  const totalTimer = unref(
+    setTimeout(
+      () =>
+        abortWith(
+          `OpenRouter stream exceeded total deadline of ${streamTimeoutMs}ms`,
+        ),
+      streamTimeoutMs,
+    ),
+  );
+  let stallTimer: ReturnType<typeof setTimeout> | undefined;
+  const armStallTimer = () => {
+    clearTimeout(stallTimer);
+    stallTimer = unref(
+      setTimeout(
+        () =>
+          abortWith(
+            `OpenRouter stream stalled: no useful chunk for ${chunkTimeoutMs}ms`,
+          ),
+        chunkTimeoutMs,
+      ),
+    );
+  };
+
+  let paragraph = "";
+  let reasoning = "";
+  const reasoningDetails: any[] = [];
+  const toolCalls: { id?: string; name: string; argumentsJson: string }[] = [];
+  let provider: string | undefined;
+  let usage: any = null;
+  let finishReason: string | null = null;
+  let sawDone = false;
+  let dataChunks = 0;
+
+  try {
+    armStallTimer(); // covers connect + time to first token
+    const response = await fetch(openRouterEndpoint(), {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
+      },
+      body: JSON.stringify({ ...payload, stream: true, usage: { include: true } }),
+      signal: signal ? anySignal([controller.signal, signal]) : controller.signal,
+    });
+
+    if (!response.ok) {
+      let data: any;
+      try {
+        data = await response.json();
+      } catch {
+        data = undefined;
+      }
+      logger.error(id, `OpenRouter stream HTTP ${response.status}:`, data);
+      const error = new Error(
+        `OpenRouter error: ${data?.error?.message || `HTTP ${response.status}`}`,
+      ) as any;
+      error.response = { status: response.status, data };
+      throw error;
+    }
+    // Some responses to a streamed request arrive as a plain JSON body anyway
+    // (error-in-200 payloads, proxies/providers that ignore `stream`). Parse
+    // those as a non-streaming body instead of scanning them for SSE lines.
+    if (response.headers.get("content-type")?.includes("application/json")) {
+      return parseOpenRouterBody(id, await response.json());
+    }
+    if (!response.body) {
+      throw new Error("OpenRouter stream error: no response body");
+    }
+
+    const reader = response.body.getReader();
+    // One decoder in stream mode for the whole body: multi-byte UTF-8
+    // sequences (CJK output!) split across TCP chunks must not be decoded
+    // per-chunk or they turn into replacement characters.
+    const decoder = new TextDecoder();
+    let lineBuffer = "";
+
+    outer: while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      lineBuffer += decoder.decode(value, { stream: true });
+
+      let newlineIdx: number;
+      while ((newlineIdx = lineBuffer.indexOf("\n")) !== -1) {
+        let line = lineBuffer.slice(0, newlineIdx);
+        lineBuffer = lineBuffer.slice(newlineIdx + 1);
+        if (line.endsWith("\r")) line = line.slice(0, -1);
+        if (!line) continue; // SSE event separator
+        if (line.startsWith(":")) continue; // SSE comment — keep-alive, NOT useful
+        if (!line.startsWith("data:")) continue; // ignore event:/id:/retry: fields
+        const dataStr = line.slice(5).trimStart();
+        if (dataStr === "[DONE]") {
+          sawDone = true;
+          break outer;
+        }
+
+        let json: any;
+        try {
+          json = JSON.parse(dataStr);
+        } catch {
+          // SSE frames one complete JSON object per data line and the line
+          // buffer already reassembles split TCP chunks, so this is a
+          // malformed event, not a partial one — skip it rather than corrupt
+          // the accumulation.
+          logger.error(
+            id,
+            "OpenRouter stream: unparseable data line:",
+            dataStr.slice(0, 200),
+          );
+          continue;
+        }
+        dataChunks++;
+
+        // Same error-in-200 wrapping as the non-streaming body, delivered as
+        // an SSE event (rate limits, moderation, provider failures).
+        if (json.error) {
+          logger.error(id, "OpenRouter stream error event:", json.error);
+          const error = new Error(
+            `OpenRouter error: ${json.error.message}`,
+          ) as any;
+          error.data = json.error;
+          throw error;
+        }
+
+        if (json.provider) provider = json.provider;
+        let useful = false;
+        if (json.usage) {
+          usage = json.usage;
+          useful = true;
+        }
+        const choice = json.choices?.[0];
+        if (choice) {
+          const delta = choice.delta ?? {};
+          if (delta.content) {
+            paragraph += delta.content;
+            useful = true;
+          }
+          if (delta.reasoning) {
+            reasoning += delta.reasoning;
+            useful = true;
+          }
+          if (Array.isArray(delta.reasoning_details) && delta.reasoning_details.length) {
+            reasoningDetails.push(...delta.reasoning_details);
+            useful = true;
+          }
+          if (Array.isArray(delta.tool_calls)) {
+            for (const toolCall of delta.tool_calls) {
+              const idx = toolCall.index ?? 0;
+              while (toolCalls.length <= idx) {
+                toolCalls.push({ name: "", argumentsJson: "" });
+              }
+              if (toolCall.id) toolCalls[idx].id = toolCall.id;
+              if (toolCall.function?.name)
+                toolCalls[idx].name += toolCall.function.name;
+              if (toolCall.function?.arguments)
+                toolCalls[idx].argumentsJson += toolCall.function.arguments;
+              useful = true;
+            }
+          }
+          if (choice.finish_reason) {
+            finishReason = choice.finish_reason;
+            useful = true;
+          }
+        }
+        if (useful) armStallTimer();
+      }
+    }
+
+    // After [DONE] the server should close, but don't rely on it — release the
+    // socket instead of holding it until GC.
+    if (sawDone) reader.cancel().catch(() => {});
+
+    // A clean close without [DONE] is acceptable only when the provider said
+    // it finished; otherwise the connection died mid-generation and returning
+    // the partial accumulation would present a truncated answer as complete.
+    if (!sawDone && !finishReason) {
+      logger.error(
+        id,
+        `OpenRouter stream ended prematurely after ${dataChunks} data chunks`,
+      );
+      throw new Error("OpenRouter stream error: ended prematurely");
+    }
+
+    return finalizeOpenRouterMessage(id, {
+      content: paragraph || null,
+      toolCalls,
+      reasoning,
+      reasoningDetails: reasoningDetails.length ? reasoningDetails : undefined,
+      provider,
+      usage,
+      forLog: () =>
+        JSON.stringify({
+          finishReason,
+          provider,
+          usage,
+          paragraph: paragraph.slice(0, 500),
+          reasoningChars: reasoning.length,
+          toolCalls,
+        }),
+    });
+  } catch (error: any) {
+    // Restore the real reason: fetch/reader surface our timer aborts as bare
+    // AbortErrors. Caller-signal aborts pass through untouched so
+    // withRetries/callWithRetries see signal.aborted and bail.
+    if (abortReason && !signal?.aborted) {
+      logger.error(id, abortReason);
+      throw new Error(abortReason);
+    }
+    throw error;
+  } finally {
+    clearTimeout(totalTimer);
+    clearTimeout(stallTimer);
+  }
+}
+
+/** Parse a complete (non-streamed) OpenRouter response body. */
+function parseOpenRouterBody(id: Identifier, data: any): ParsedResponseMessage {
+  // OpenRouter wraps upstream provider failures (rate limits, moderation,
+  // model-unavailable) in an HTTP 200 whose body is `{ error: {...} }` with no
+  // `choices` key. Surface that error instead of letting `choices[0]` throw a
+  // cryptic "Cannot read properties of undefined (reading '0')" TypeError that
+  // hides the real reason. (Mirrors the OpenAI non-streaming guard above.)
+  if (data.error) {
+    logger.error(id, "OpenRouter error:", data.error);
+    throw new Error(`OpenRouter error: ${data.error.message}`);
+  }
+
+  const answer = data.choices?.[0]?.message;
+  if (!answer) {
+    logger.error(id, "Missing answer in OpenRouter API response:", data);
+    throw new Error("Missing answer in OpenRouter API");
+  }
+
+  return finalizeOpenRouterMessage(id, {
+    content: answer.content ?? null,
+    toolCalls: (answer.tool_calls ?? []).map((tc: any) => ({
+      id: tc.id,
+      name: tc.function.name,
+      argumentsJson: tc.function.arguments,
+    })),
+    reasoning: answer.reasoning ?? undefined,
+    reasoningDetails: answer.reasoning_details ?? undefined,
+    provider: data.provider ?? undefined,
+    usage: data.usage ?? null,
+    forLog: () => JSON.stringify(data),
+  });
+}
+
+/** Non-streaming transport — kept for callers that set `streaming: false`. */
+async function callOpenRouterNonStreaming(
+  id: Identifier,
+  payload: OpenRouterPayload,
+  requestTimeoutMs: number = OPENROUTER_NONSTREAM_TIMEOUT_MS,
+  signal?: AbortSignal,
+): Promise<ParsedResponseMessage> {
+  const response = await withRequestDeadline(
+    "OpenRouter",
+    requestTimeoutMs,
+    signal,
+    (mergedSignal) =>
+      axios.post(openRouterEndpoint(), payload, {
+        headers: {
+          "content-type": "application/json",
+          Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
+        },
+        timeout: requestTimeoutMs,
+        signal: mergedSignal,
+      }),
+  );
+
+  return parseOpenRouterBody(id, response.data);
+}
+
+interface OpenRouterCallOptions {
+  streaming: boolean;
+  streamTimeoutMs: number;
+  requestTimeoutMs: number;
+  chunkTimeoutMs: number;
 }
 
 async function callOpenRouterWithRetries(
   id: Identifier,
   payload: OpenRouterPayload,
   retries: number = 5,
-  requestTimeoutMs: number = 120_000,
+  options: OpenRouterCallOptions,
   signal?: AbortSignal,
 ): Promise<ParsedResponseMessage> {
   return withRetries(
     id,
     "OpenRouter",
-    () => callOpenRouter(id, payload, requestTimeoutMs, signal),
+    () =>
+      options.streaming
+        ? callOpenRouterStream(
+            id,
+            payload,
+            options.streamTimeoutMs,
+            options.chunkTimeoutMs,
+            signal,
+          )
+        : callOpenRouterNonStreaming(
+            id,
+            payload,
+            options.requestTimeoutMs,
+            signal,
+          ),
     { retries, signal },
   );
 }
@@ -2093,11 +2414,23 @@ export async function callWithRetries(
         break;
 
       case "openrouter":
+        // OpenRouter streams by default. The two transports have independent
+        // budgets on purpose: `requestTimeoutMs` only bounds non-streaming
+        // attempts (OpenRouter default 180s, tighter 120s global default kept
+        // for other providers), while streaming gets `streamTimeoutMs`
+        // (default 600s) total + the per-useful-chunk stall timeout.
         result = await callOpenRouterWithRetries(
           id,
           prepareOpenRouterPayload(routingPayload),
           retries,
-          requestTimeoutMs,
+          {
+            streaming: aiPayload.streaming ?? true,
+            streamTimeoutMs:
+              aiPayload.streamTimeoutMs ?? OPENROUTER_STREAM_TIMEOUT_MS,
+            requestTimeoutMs:
+              aiPayload.requestTimeoutMs ?? OPENROUTER_NONSTREAM_TIMEOUT_MS,
+            chunkTimeoutMs,
+          },
           signal,
         );
         break;
