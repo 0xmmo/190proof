@@ -2319,11 +2319,31 @@ function moderationEvictionSlug(
   return fromOrder ? fromOrder.split("/")[0] : display.toLowerCase();
 }
 
+/**
+ * Least time a streaming attempt is worth starting with. Below this the
+ * generation cannot plausibly finish before the caller's deadline, so burning
+ * a provider call (and paying for tokens that get discarded) is pure waste.
+ */
+export const MIN_STREAM_ATTEMPT_MS = 10_000;
+
 interface OpenRouterCallOptions {
   streaming: boolean;
   streamTimeoutMs: number;
+  streamDeadlineAt?: number;
   requestTimeoutMs: number;
   chunkTimeoutMs: number;
+}
+
+/**
+ * Per-attempt streaming budget: the smaller of the per-attempt cap and the
+ * time left until the caller's absolute deadline. Returns null when too little
+ * remains to be worth an attempt.
+ */
+function streamAttemptBudgetMs(options: OpenRouterCallOptions): number | null {
+  if (options.streamDeadlineAt === undefined) return options.streamTimeoutMs;
+  const remaining = options.streamDeadlineAt - Date.now();
+  if (remaining < MIN_STREAM_ATTEMPT_MS) return null;
+  return Math.min(options.streamTimeoutMs, remaining);
 }
 
 async function callOpenRouterWithRetries(
@@ -2339,13 +2359,27 @@ async function callOpenRouterWithRetries(
     "OpenRouter",
     () =>
       (options.streaming
-        ? callOpenRouterStream(
-            id,
-            payload,
-            options.streamTimeoutMs,
-            options.chunkTimeoutMs,
-            signal,
-          )
+        ? (() => {
+            const budget = streamAttemptBudgetMs(options);
+            if (budget === null) {
+              // Fail fast rather than start a doomed generation. Thrown (not
+              // returned) so fallbackModel still gets its chance — a cheaper
+              // model may answer in the time that's left.
+              const error = new Error(
+                "OpenRouter stream skipped: caller deadline leaves too little time for another attempt",
+              ) as any;
+              error.deadlineExceeded = true;
+              logger.error(id, error.message);
+              throw error;
+            }
+            return callOpenRouterStream(
+              id,
+              payload,
+              budget,
+              options.chunkTimeoutMs,
+              signal,
+            );
+          })()
         : callOpenRouterNonStreaming(
             id,
             payload,
@@ -2497,7 +2531,8 @@ export async function callWithRetries(
         // budgets on purpose: `requestTimeoutMs` only bounds non-streaming
         // attempts (OpenRouter default 180s, tighter 120s global default kept
         // for other providers), while streaming gets `streamTimeoutMs`
-        // (default 600s) total + the per-useful-chunk stall timeout.
+        // (default 600s) total + the per-useful-chunk stall timeout, further
+        // bounded by `streamDeadlineAt` when the caller has a turn budget.
         result = await callOpenRouterWithRetries(
           id,
           prepareOpenRouterPayload(routingPayload),
@@ -2506,6 +2541,7 @@ export async function callWithRetries(
             streaming: aiPayload.streaming ?? true,
             streamTimeoutMs:
               aiPayload.streamTimeoutMs ?? OPENROUTER_STREAM_TIMEOUT_MS,
+            streamDeadlineAt: aiPayload.streamDeadlineAt,
             requestTimeoutMs:
               aiPayload.requestTimeoutMs ?? OPENROUTER_NONSTREAM_TIMEOUT_MS,
             chunkTimeoutMs,

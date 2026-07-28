@@ -562,6 +562,19 @@ export interface GenericPayload {
    */
   streamTimeoutMs?: number;
   /**
+   * OpenRouter-only: absolute wall-clock deadline (epoch ms) for the whole
+   * call INCLUDING retries — the caller's turn budget, not a per-attempt one.
+   * Each streaming attempt gets `min(streamTimeoutMs, deadline - now)`, and
+   * once too little time remains to be worth an attempt the call fails fast
+   * instead of starting a generation that cannot finish.
+   *
+   * Without it, a per-attempt budget is re-granted on every retry, so a slow
+   * generation can outlive the caller's own turn deadline and get killed with
+   * nothing to show (2026-07-28: a 538s completion finished just as the
+   * caller's 585s turn budget expired, and the reply was discarded).
+   */
+  streamDeadlineAt?: number;
+  /**
    * Optional caller-supplied cancellation signal. When it aborts, the in-flight
    * provider request is cancelled and `callWithRetries` rejects immediately —
    * it does NOT retry or fall back (both retry loop and fallback branch bail on
