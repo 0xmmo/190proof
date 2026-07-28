@@ -335,17 +335,25 @@ test("a mid-generation stall dies within one stall window, not the total budget"
 
 // ─── total deadline ─────────────────────────────────────────────────────────
 
-test("a healthy stream that outlives streamTimeoutMs is killed by the total deadline", async () => {
+test("a healthy stream that outlives streamTimeoutMs is cut at the total deadline", async () => {
   respond = (_req, res) => {
     sseHead(res);
     every(50, () => event(res, contentDelta("x")));
   };
 
   const startedAt = Date.now();
-  await expect(
-    callWithRetries("spec", payload({ streamTimeoutMs: 700 }), undefined, 1, 300),
-  ).rejects.toThrow(/exceeded total deadline of 700ms/);
+  // Cut, not discarded: the prose generated before the deadline comes back
+  // marked truncated (see stream-deadline.spec.ts for the full contract).
+  const answer = await callWithRetries(
+    "spec",
+    payload({ streamTimeoutMs: 700 }),
+    undefined,
+    1,
+    300,
+  );
   const elapsed = Date.now() - startedAt;
+  expect(answer.truncated).toBe(true);
+  expect(answer.content).toMatch(/^x+$/);
   expect(elapsed).toBeGreaterThanOrEqual(650);
   expect(elapsed).toBeLessThan(2_500);
 });

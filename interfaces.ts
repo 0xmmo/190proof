@@ -323,6 +323,15 @@ export interface ParsedResponseMessage {
    * mismatch with the requested model's provider reveals the fallback.
    */
   provider?: string;
+  /**
+   * True when the answer is INCOMPLETE: the streamed generation was cut at the
+   * caller's deadline and the partial prose is returned instead of discarded.
+   * Content is mid-sentence (or mid-file) by definition — surface it to the
+   * end user as truncated rather than presenting it as a finished answer.
+   * Never set on tool-call turns (a half-streamed arguments fragment can't be
+   * salvaged) and never on a normal completion.
+   */
+  truncated?: boolean;
   usage: {
     prompt_tokens: number;
     completion_tokens: number;

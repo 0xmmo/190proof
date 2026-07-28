@@ -1980,7 +1980,11 @@ async function callOpenRouterStream(
   // bare AbortError, so without this the retry log would say "This operation
   // was aborted" no matter which timer fired.
   let abortReason: string | null = null;
-  const abortWith = (reason: string) => {
+  // Which timer fired: a deadline abort can still yield a usable (truncated)
+  // answer, a stall abort by definition cannot.
+  let abortKind: "deadline" | "stall" | null = null;
+  const abortWith = (kind: "deadline" | "stall", reason: string) => {
+    abortKind = kind;
     abortReason = reason;
     controller.abort();
   };
@@ -1993,6 +1997,7 @@ async function callOpenRouterStream(
     setTimeout(
       () =>
         abortWith(
+          "deadline",
           `OpenRouter stream exceeded total deadline of ${streamTimeoutMs}ms`,
         ),
       streamTimeoutMs,
@@ -2005,6 +2010,7 @@ async function callOpenRouterStream(
       setTimeout(
         () =>
           abortWith(
+            "stall",
             `OpenRouter stream stalled: no useful chunk for ${chunkTimeoutMs}ms`,
           ),
         chunkTimeoutMs,
@@ -2193,7 +2199,42 @@ async function callOpenRouterStream(
     // AbortErrors. Caller-signal aborts pass through untouched so
     // withRetries/callWithRetries see signal.aborted and bail.
     if (abortReason && !signal?.aborted) {
-      logger.error(id, abortReason);
+      // Deadline abort with usable prose in hand: return it truncated rather
+      // than discard tokens the provider already generated (and billed) and
+      // retry from zero. Tool calls are excluded — a half-streamed arguments
+      // fragment is unparseable JSON, so there's nothing to salvage.
+      const kept = paragraph.trim();
+      if (abortKind === "deadline" && kept && !toolCalls.length) {
+        try {
+          const message = finalizeOpenRouterMessage(id, {
+            content: kept,
+            toolCalls: [],
+            reasoning,
+            reasoningDetails: reasoningDetails.length
+              ? reasoningDetails
+              : undefined,
+            provider,
+            usage,
+            forLog: () => JSON.stringify({ provider, kept: kept.slice(0, 500) }),
+          });
+          message.truncated = true;
+          logger.log(
+            id,
+            `${abortReason} — returning truncated answer (${kept.length} chars, ~${estimateTokens(kept)} tokens kept)`,
+          );
+          return message;
+        } catch {
+          // Unusable partial (empty after DSML excision, unparsed markup) —
+          // fall through to the discard path below.
+        }
+      }
+      // Nothing salvageable: say how much generation is being thrown away, so
+      // wasted spend is visible (aborted attempts write no usage record —
+      // OpenRouter only sends `usage` in the final chunk we never receive).
+      logger.error(
+        id,
+        `${abortReason} — discarding ~${estimateTokens(paragraph + reasoning)} generated tokens (content ${paragraph.length} chars, reasoning ${reasoning.length} chars, ${dataChunks} chunks)`,
+      );
       throw new Error(abortReason);
     }
     throw error;
@@ -2325,6 +2366,13 @@ function moderationEvictionSlug(
  * a provider call (and paying for tokens that get discarded) is pure waste.
  */
 export const MIN_STREAM_ATTEMPT_MS = 10_000;
+
+/**
+ * Rough token count for discard/truncation accounting only (~4 chars/token).
+ * Aborted attempts never receive OpenRouter's `usage` chunk, so this is the
+ * only signal for how much generation was paid for and thrown away.
+ */
+const estimateTokens = (text: string) => Math.round(text.length / 4);
 
 interface OpenRouterCallOptions {
   streaming: boolean;
