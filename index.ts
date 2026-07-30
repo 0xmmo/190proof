@@ -1604,9 +1604,24 @@ function prepareOpenAICompatMessages(
       continue;
     }
 
+    // Content stays a plain string on this path, so attachments become URL
+    // references appended to it — images included, since the models behind
+    // OpenRouter/Groq are text-only here and would otherwise never learn a
+    // file exists.
+    const fileRefs = (message.files || [])
+      .filter((file) => file.url)
+      .map((file) =>
+        ALLOWED_IMAGE_MIME_TYPES.includes(file.mimeType)
+          ? `Image (${file.url})`
+          : `File (${file.url})`,
+      );
+    const content = [normalizeMessageContent(message.content), ...fileRefs]
+      .filter(Boolean)
+      .join("\n");
+
     const outMessage: OpenAIMessage = {
       role: message.role,
-      content: normalizeMessageContent(message.content),
+      content,
     };
     if (message.functionCalls?.length) {
       outMessage.tool_calls = message.functionCalls.map((fc, i) => ({
@@ -1618,7 +1633,7 @@ function prepareOpenAICompatMessages(
         },
       }));
       // OpenAI-compatible APIs want null content on a tool-call-only turn.
-      if (!message.content) outMessage.content = null;
+      if (!content) outMessage.content = null;
     }
     if (message.reasoning) outMessage.reasoning = message.reasoning;
     const reasoningDetails = filterOpenAICompatReasoningDetails(

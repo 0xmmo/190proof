@@ -150,6 +150,41 @@ test("streams content, captures provider + usage from the final chunk", async ()
   expect(lastRequestBody.usage).toEqual({ include: true });
 });
 
+test("message files serialize as URL text references in the request payload", async () => {
+  respond = (_req, res) => {
+    sseHead(res);
+    event(res, contentDelta("ok"));
+    event(res, { choices: [{ delta: {}, finish_reason: "stop" }] });
+    DONE(res);
+  };
+
+  await callWithRetries(
+    "spec",
+    payload({
+      messages: [
+        {
+          role: "user",
+          content: "look at these",
+          files: [
+            { mimeType: "image/png", url: "https://attachments.olly.bot/a.png" },
+            { mimeType: "application/pdf", url: "https://attachments.olly.bot/b.pdf" },
+            // no URL → nothing referenceable on a text-only path
+            { mimeType: "application/pdf", data: "AAAA" },
+          ],
+        },
+      ],
+    }),
+    undefined,
+    1,
+  );
+
+  expect(lastRequestBody.messages[0].content).toBe(
+    "look at these\n" +
+      "Image (https://attachments.olly.bot/a.png)\n" +
+      "File (https://attachments.olly.bot/b.pdf)",
+  );
+});
+
 test("reassembles UTF-8 multi-byte chars and SSE events split across TCP chunks", async () => {
   respond = (_req, res) => {
     sseHead(res);
