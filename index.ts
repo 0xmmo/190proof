@@ -1180,6 +1180,7 @@ async function prepareGoogleAIPayload(
   const preparedPayload: GoogleAIPayload = {
     model: payload.model as GeminiModel,
     messages: [],
+    thinkingConfig: payload.thinkingConfig,
     tools: payload.functions
       ? {
           functionDeclarations: payload.functions.map((fn) => ({
@@ -1306,7 +1307,12 @@ async function callGoogleAI(
   // 400s the request). Going over the wire ourselves preserves it both ways.
   const requestBody: any = {
     contents,
-    generationConfig: { responseModalities: ["TEXT"] },
+    generationConfig: {
+      responseModalities: ["TEXT"],
+      ...(payload.thinkingConfig
+        ? { thinkingConfig: payload.thinkingConfig }
+        : {}),
+    },
   };
   if (payload.tools) requestBody.tools = [payload.tools];
   if (payload.tools && payload.toolConfig) {
@@ -1430,6 +1436,7 @@ async function callGoogleAI(
           completion_tokens: response.usageMetadata.candidatesTokenCount ?? 0,
           total_tokens: response.usageMetadata.totalTokenCount ?? 0,
           cached_tokens: response.usageMetadata.cachedContentTokenCount ?? 0,
+          thoughts_tokens: response.usageMetadata.thoughtsTokenCount,
         }
       : null,
   };

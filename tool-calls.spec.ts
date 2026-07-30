@@ -490,4 +490,48 @@ describe("Google serialization (REST generateContent)", () => {
     const fcPart = modelTurn.parts.find((p: any) => p.functionCall);
     expect(fcPart.thoughtSignature).toBe("sig-xyz");
   });
+
+  test("thinkingConfig is forwarded verbatim into generationConfig", async () => {
+    await callWithRetries(["test", "g-thinking"], {
+      model: "google:gemini-3-flash-preview",
+      messages: [{ role: "user", content: "hi" }],
+      thinkingConfig: { thinkingLevel: "HIGH" },
+    });
+
+    const body = mockedPost.mock.calls[0][1] as any;
+    expect(body.generationConfig.thinkingConfig).toEqual({
+      thinkingLevel: "HIGH",
+    });
+  });
+
+  test("generationConfig carries no thinkingConfig key when the caller omits it", async () => {
+    await callWithRetries(["test", "g-no-thinking"], {
+      model: "google:gemini-3-flash-preview",
+      messages: [{ role: "user", content: "hi" }],
+    });
+
+    const body = mockedPost.mock.calls[0][1] as any;
+    expect("thinkingConfig" in body.generationConfig).toBe(false);
+  });
+
+  test("usage.thoughts_tokens maps from usageMetadata.thoughtsTokenCount", async () => {
+    mockedPost.mockReset();
+    mockedPost.mockResolvedValue({
+      data: {
+        candidates: [{ content: { parts: [{ text: "hi" }] } }],
+        usageMetadata: {
+          promptTokenCount: 1,
+          candidatesTokenCount: 5,
+          totalTokenCount: 6,
+          thoughtsTokenCount: 4,
+        },
+      },
+    });
+
+    const resp = await callWithRetries(["test", "g-thoughts-usage"], {
+      model: "google:gemini-3-flash-preview",
+      messages: [{ role: "user", content: "hi" }],
+    });
+    expect(resp.usage?.thoughts_tokens).toBe(4);
+  });
 });

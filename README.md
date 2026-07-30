@@ -279,6 +279,7 @@ Optional per-request knobs live on `payload` (`GenericPayload`):
 - `payload.streaming`: `boolean` - OpenRouter-only (default: true). Streams the completion over SSE. A streaming attempt is bounded by two independent timers instead of `requestTimeoutMs`: `streamTimeoutMs` (total wall clock, default 600000) and the per-useful-chunk stall timeout (`chunkTimeoutMs` argument, default 15000). A chunk is "useful" only if it advances content, reasoning, tool-call fragments, finish_reason, or usage — SSE comment keep-alives (`: OPENROUTER PROCESSING`) and role-only deltas don't reset the stall timer, so a hung provider dies within one stall window while a healthy long generation can run to the total budget. Set `streaming: false` for the old single-JSON-body transport.
 - `payload.streamTimeoutMs`: `number` - OpenRouter-only: total wall-clock budget per streaming attempt (default: 600000).
 - `payload.streamDeadlineAt`: `number` - OpenRouter-only: absolute deadline (epoch ms) for the whole call **including retries** — the caller's turn budget. Each attempt gets `min(streamTimeoutMs, deadline - now)`, and once under 10s remain the call fails fast instead of starting a generation that cannot be delivered. Use it whenever the caller has its own timeout: a per-attempt budget alone is re-granted on every retry and can outlive that timeout.
+- `payload.thinkingConfig`: `Record<string, unknown>` - Google-only: forwarded verbatim as `generationConfig.thinkingConfig` on the Gemini request — e.g. `{ thinkingBudget: 0 }` to disable thinking, `{ thinkingLevel: "HIGH" }` on models that take a level. Ignored by all other adapters; shapes are model-specific and validated by Google, not the SDK.
 
 When a streaming attempt is cut at its **total deadline** and prose has already arrived, the partial answer is returned with `truncated: true` on the response rather than discarded — those tokens were generated and billed, so throwing them away costs money and gives the user nothing. Surface such a reply as incomplete. Salvage never applies to tool-call turns (half-streamed arguments are unparseable JSON), to stalls (the provider died mid-thought), or to caller aborts. When nothing is salvageable, the discard is logged with an approximate token count — aborted attempts never receive OpenRouter's `usage` chunk, so that log line is the only record of the wasted spend.
 
@@ -304,6 +305,9 @@ interface ParsedResponseMessage {
     prompt_tokens: number;
     completion_tokens: number;
     total_tokens: number;
+    // Reasoning/thinking tokens spent before the visible answer; currently
+    // populated from Google's usageMetadata.thoughtsTokenCount.
+    thoughts_tokens?: number;
   } | null; // null when streaming
 }
 ```

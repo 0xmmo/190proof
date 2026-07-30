@@ -338,6 +338,13 @@ export interface ParsedResponseMessage {
     total_tokens: number;
     /** Prompt tokens served from the provider's cache (subset of prompt_tokens). */
     cached_tokens?: number;
+    /**
+     * Reasoning/thinking tokens spent before the visible answer (subset of
+     * completion_tokens on some providers, separate on others). Currently
+     * populated from Google's `usageMetadata.thoughtsTokenCount`; undefined
+     * when the provider reports none.
+     */
+    thoughts_tokens?: number;
   } | null;
 }
 
@@ -526,6 +533,7 @@ export interface GoogleAIPayload {
     functionCallingConfig: { mode: "NONE" | "AUTO" | "ANY" };
   };
   systemInstruction?: string;
+  thinkingConfig?: Record<string, unknown>;
 }
 
 export type Provider = "openai" | "anthropic" | "google" | "groq" | "openrouter";
@@ -539,6 +547,14 @@ export interface GenericPayload {
   function_call?: "none" | "auto" | { name: string };
   temperature?: number;
   fallbackModel?: AnyModel;
+  /**
+   * Google-only: forwarded verbatim as `generationConfig.thinkingConfig` on
+   * the Gemini request — e.g. `{ thinkingBudget: 0 }` to disable thinking or
+   * `{ thinkingLevel: "HIGH" }` on models that take a level. Ignored by all
+   * other adapters. Shapes are model-specific and validated by Google, not
+   * the SDK.
+   */
+  thinkingConfig?: Record<string, unknown>;
   /**
    * OpenRouter-only: provider-routing preferences. Ignored by non-OpenRouter
    * adapters. Forwarded as the request body's `provider` field.
