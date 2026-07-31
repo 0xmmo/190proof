@@ -487,7 +487,17 @@ async function callOpenAIStream(
   const response = await fetch(endpoint, {
     method: "POST",
     headers,
-    body: JSON.stringify({ ...openAiPayload, stream: true }),
+    // include_usage: OpenAI only reports token usage on streams when asked,
+    // via a final choices-less chunk — without it every streamed call is
+    // invisible to usage accounting. Skipped for Azure, where older
+    // api-versions reject stream_options.
+    body: JSON.stringify({
+      ...openAiPayload,
+      stream: true,
+      ...(openAiConfig?.service !== "azure"
+        ? { stream_options: { include_usage: true } }
+        : {}),
+    }),
     // Merge (don't overwrite) the internal timeout controller with the caller's
     // cancellation signal so both an internal timeout and an external abort stop
     // the stream.
@@ -500,6 +510,7 @@ async function callOpenAIStream(
 
   let paragraph = "";
   let reasoning = "";
+  let streamUsage: ParsedResponseMessage["usage"] = null;
   const toolCallAccumulators: { id?: string; name: string; arguments: string }[] =
     [];
 
@@ -540,13 +551,15 @@ async function callOpenAIStream(
 
       if (jsonString.includes("[DONE]")) {
         clearTimeout(overallTimeout);
-        return parseStreamedResponse(
+        const parsed = parseStreamedResponse(
           id,
           paragraph,
           toolCallAccumulators,
           functionNames,
           reasoning,
         );
+        parsed.usage = streamUsage;
+        return parsed;
       }
 
       let json;
@@ -558,6 +571,18 @@ async function callOpenAIStream(
       }
 
       if (!json.choices?.length) {
+        // stream_options.include_usage delivers the request's usage on a
+        // final choices-less chunk (just before [DONE]).
+        if (json.usage) {
+          streamUsage = {
+            prompt_tokens: json.usage.prompt_tokens,
+            completion_tokens: json.usage.completion_tokens,
+            total_tokens: json.usage.total_tokens,
+            cached_tokens:
+              json.usage.prompt_tokens_details?.cached_tokens ?? 0,
+          };
+          continue;
+        }
         if (json.error) {
           logger.error(id, "Stream error from OpenAI:", json.error);
           const error = new Error("Stream error: OpenAI error") as any;
