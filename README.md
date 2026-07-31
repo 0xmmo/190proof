@@ -136,6 +136,16 @@ const payload: GenericPayload = {
 const response = await callWithRetries("image-example", payload);
 ```
 
+How images reach the model depends on the provider. OpenAI, Anthropic, and
+Google get native image blocks. Groq is text-only: images degrade to an inline
+`Image (url)` text reference. OpenRouter sends OpenAI-style `image_url` content
+parts (the remote URL when present, else a `data:` URI) — but if the model has
+no vision-capable endpoints, OpenRouter rejects the request with a
+routing-layer 404, so the retry loop resends the payload with images degraded
+to the same inline text references Groq gets, and remembers the model
+(in-process, until restart) so later calls degrade up front. Messages without
+image attachments serialize identically either way.
+
 ### With System Messages
 
 ```typescript

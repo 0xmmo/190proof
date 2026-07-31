@@ -1595,9 +1595,19 @@ function normalizeMessageContent(
  * become assistant `tool_calls`, and a `role:"tool"` message expands to one
  * `{role:"tool", tool_call_id, content}` per result. Reasoning is passed
  * through only when the caller supplied it.
+ *
+ * With `imageParts` (OpenRouter models with vision-capable endpoints), a
+ * message carrying image attachments additionally gets OpenAI-style
+ * `image_url` content parts (remote URL when present, else a `data:` URI —
+ * which the plain path would silently drop), with the string content becoming
+ * the leading text part. Like the OpenAI adapter, URL images keep their
+ * `Image (url)` text reference alongside the pixels so the model can still
+ * quote the link. Messages without image attachments serialize identically in
+ * both modes.
  */
 function prepareOpenAICompatMessages(
   messages: GenericMessage[],
+  opts: { imageParts?: boolean } = {},
 ): OpenAIMessage[] {
   const out: OpenAIMessage[] = [];
   for (const message of messages) {
@@ -1613,8 +1623,8 @@ function prepareOpenAICompatMessages(
     }
 
     // Content stays a plain string on this path, so attachments become URL
-    // references appended to it — images included, since the models behind
-    // OpenRouter/Groq are text-only here and would otherwise never learn a
+    // references appended to it — images included, since without `imageParts`
+    // the model is treated as text-only and would otherwise never learn a
     // file exists.
     const fileRefs = (message.files || [])
       .filter((file) => file.url)
@@ -1631,6 +1641,28 @@ function prepareOpenAICompatMessages(
       role: message.role,
       content,
     };
+    if (opts.imageParts) {
+      const imageBlocks: OpenAIContentBlock[] = (message.files || [])
+        .filter(
+          (file) =>
+            ALLOWED_IMAGE_MIME_TYPES.includes(file.mimeType) &&
+            (file.url || file.data),
+        )
+        .map((file) => ({
+          type: "image_url",
+          image_url: {
+            url: file.url || `data:${file.mimeType};base64,${file.data}`,
+          },
+        }));
+      if (imageBlocks.length) {
+        outMessage.content = [
+          ...(content
+            ? [{ type: "text", text: content } as OpenAIContentBlock]
+            : []),
+          ...imageBlocks,
+        ];
+      }
+    }
     if (message.functionCalls?.length) {
       outMessage.tool_calls = message.functionCalls.map((fc, i) => ({
         id: fc.id ?? `call_${i}`,
@@ -1641,7 +1673,8 @@ function prepareOpenAICompatMessages(
         },
       }));
       // OpenAI-compatible APIs want null content on a tool-call-only turn.
-      if (!content) outMessage.content = null;
+      if (!content && !Array.isArray(outMessage.content))
+        outMessage.content = null;
     }
     if (message.reasoning) outMessage.reasoning = message.reasoning;
     const reasoningDetails = filterOpenAICompatReasoningDetails(
@@ -1770,10 +1803,22 @@ async function callGroqWithRetries(
 // OPENROUTER
 // ─────────────────────────────────────────────────────────────────────────────
 
+/**
+ * In-process memory of OpenRouter models that rejected image input (the
+ * routing-layer 404 "No endpoints found that support image input"). Payloads
+ * for these models degrade image attachments to inline `Image (url)` text
+ * references up front — the exact pre-vision serialization — instead of
+ * burning a doomed attempt per call. Populated by the retry loop on first
+ * rejection; cleared only by process restart (exported so tests can reset it).
+ */
+export const openRouterImageRejectedModels = new Set<string>();
+
 function prepareOpenRouterPayload(payload: GenericPayload): OpenRouterPayload {
   return {
     model: payload.model as OpenRouterModel,
-    messages: prepareOpenAICompatMessages(payload.messages),
+    messages: prepareOpenAICompatMessages(payload.messages, {
+      imageParts: !openRouterImageRejectedModels.has(String(payload.model)),
+    }),
     tools: payload.functions?.map((fn) => ({
       type: "function",
       function: fn,
@@ -2403,6 +2448,24 @@ interface OpenRouterCallOptions {
   streamDeadlineAt?: number;
   requestTimeoutMs: number;
   chunkTimeoutMs: number;
+  /**
+   * The original generic messages behind `payload.messages`, so the retry
+   * loop can re-serialize them in the text-ref form when the model turns out
+   * to have no image-capable endpoints.
+   */
+  genericMessages?: GenericMessage[];
+}
+
+/**
+ * OpenRouter rejects `image_url` parts sent to a model with no vision-capable
+ * endpoints with a routing-layer 404 ("No endpoints found that support image
+ * input") before any provider is hit. The rejection is deterministic per
+ * payload, so retrying it unchanged is doomed — the retry loop degrades
+ * images to text refs and remembers the model instead.
+ */
+function isImageInputRejection(error: any): boolean {
+  const body = error?.data ?? error?.response?.data?.error;
+  return /no endpoints found.*image input/i.test(String(body?.message ?? ""));
 }
 
 /**
@@ -2473,6 +2536,18 @@ async function callOpenRouterWithRetries(
           logger.log(
             id,
             `OpenRouter moderation eviction: ignoring provider "${slug}" for remaining attempts`,
+          );
+        }
+        if (isImageInputRejection(error) && options.genericMessages) {
+          openRouterImageRejectedModels.add(String(payload.model));
+          // Same attempt-scoped mutation as above: the retry resends the
+          // pre-vision serialization (images inlined as `Image (url)` refs).
+          payload.messages = prepareOpenAICompatMessages(
+            options.genericMessages,
+          );
+          logger.log(
+            id,
+            `OpenRouter: ${payload.model} has no image-capable endpoints; retrying with images as text refs`,
           );
         }
         throw error;
@@ -2616,6 +2691,7 @@ export async function callWithRetries(
             requestTimeoutMs:
               aiPayload.requestTimeoutMs ?? OPENROUTER_NONSTREAM_TIMEOUT_MS,
             chunkTimeoutMs,
+            genericMessages: routingPayload.messages,
           },
           signal,
         );

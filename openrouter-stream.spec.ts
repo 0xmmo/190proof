@@ -150,7 +150,7 @@ test("streams content, captures provider + usage from the final chunk", async ()
   expect(lastRequestBody.usage).toEqual({ include: true });
 });
 
-test("message files serialize as URL text references in the request payload", async () => {
+test("image files become image_url parts; non-image files stay URL text references", async () => {
   respond = (_req, res) => {
     sseHead(res);
     event(res, contentDelta("ok"));
@@ -168,7 +168,7 @@ test("message files serialize as URL text references in the request payload", as
           files: [
             { mimeType: "image/png", url: "https://attachments.olly.bot/a.png" },
             { mimeType: "application/pdf", url: "https://attachments.olly.bot/b.pdf" },
-            // no URL → nothing referenceable on a text-only path
+            // no URL and not an image → nothing referenceable
             { mimeType: "application/pdf", data: "AAAA" },
           ],
         },
@@ -178,11 +178,19 @@ test("message files serialize as URL text references in the request payload", as
     1,
   );
 
-  expect(lastRequestBody.messages[0].content).toBe(
-    "look at these\n" +
-      "Image (https://attachments.olly.bot/a.png)\n" +
-      "File (https://attachments.olly.bot/b.pdf)",
-  );
+  expect(lastRequestBody.messages[0].content).toEqual([
+    {
+      type: "text",
+      text:
+        "look at these\n" +
+        "Image (https://attachments.olly.bot/a.png)\n" +
+        "File (https://attachments.olly.bot/b.pdf)",
+    },
+    {
+      type: "image_url",
+      image_url: { url: "https://attachments.olly.bot/a.png" },
+    },
+  ]);
 });
 
 test("reassembles UTF-8 multi-byte chars and SSE events split across TCP chunks", async () => {
