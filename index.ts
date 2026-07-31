@@ -1855,6 +1855,7 @@ function prepareOpenRouterPayload(payload: GenericPayload): OpenRouterPayload {
       : undefined,
     temperature: payload.temperature,
     provider: payload.provider,
+    reasoning_effort: payload.reasoningEffort,
   };
 }
 

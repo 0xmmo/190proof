@@ -447,6 +447,7 @@ export interface OpenRouterPayload {
     | { type: "function"; function: { name: string } };
   temperature?: number;
   provider?: OpenRouterProviderPreferences;
+  reasoning_effort?: string;
   /** Set by the adapter, never by callers: SSE streaming on/off. */
   stream?: boolean;
   /**
@@ -562,11 +563,15 @@ export interface GenericPayload {
    */
   provider?: OpenRouterProviderPreferences;
   /**
-   * OpenAI-only: forwarded as `reasoning_effort` on the request. Valid values
-   * are model-dependent (`none`/`minimal`/`low`/`medium`/`high`/`xhigh`/`max`).
-   * Reasoning-by-default models (gpt-5.6 family) 400 on /chat/completions when
-   * function tools are present unless this is explicitly `"none"` — their
-   * implicit default is `medium`. Ignored by all other adapters.
+   * OpenAI and OpenRouter: forwarded as `reasoning_effort` on the request.
+   * Valid values are model-dependent
+   * (`none`/`minimal`/`low`/`medium`/`high`/`xhigh`/`max`).
+   * Direct OpenAI: reasoning-by-default models (gpt-5.6 family) 400 on
+   * /chat/completions when function tools are present unless this is
+   * explicitly `"none"` — their implicit default is `medium`. Via OpenRouter
+   * the same models accept tools at any effort (OpenRouter fronts
+   * /v1/responses), so omitting this runs them at their native default.
+   * Ignored by all other adapters.
    */
   reasoningEffort?: string;
   /**

@@ -203,3 +203,26 @@ test("non-streaming transport degrades the same way", async () => {
   expect(answer.content).toBe("nonstream ok");
   expect(requestBodies[1].messages).toEqual([LEGACY_MESSAGE]);
 });
+
+// ─── reasoning_effort passthrough (same harness, not image-specific) ─────────
+
+test("reasoningEffort is forwarded as reasoning_effort", async () => {
+  respond = (_attempt, res) => sseAnswer(res, "ok");
+  await callWithRetries(
+    "spec",
+    payload({
+      messages: [{ role: "user", content: "hello" }],
+      reasoningEffort: "low",
+    }),
+  );
+  expect(requestBodies[0].reasoning_effort).toBe("low");
+});
+
+test("body carries no reasoning_effort key when the caller omits it", async () => {
+  respond = (_attempt, res) => sseAnswer(res, "ok");
+  await callWithRetries(
+    "spec",
+    payload({ messages: [{ role: "user", content: "hello" }] }),
+  );
+  expect("reasoning_effort" in requestBodies[0]).toBe(false);
+});
