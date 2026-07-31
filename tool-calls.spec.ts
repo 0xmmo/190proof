@@ -378,6 +378,28 @@ describe("OpenAI serialization", () => {
       content: '{"tempC":22}',
     });
   });
+
+  test("reasoningEffort is forwarded as reasoning_effort", async () => {
+    await callWithRetries(["test", "openai-effort"], {
+      model: "openai:o1-mini",
+      messages: [{ role: "user", content: "hi" }],
+      functions: FUNCTIONS,
+      reasoningEffort: "none",
+    });
+
+    const body = JSON.parse(fetchSpy.mock.calls[0][1].body as string);
+    expect(body.reasoning_effort).toBe("none");
+  });
+
+  test("body carries no reasoning_effort key when the caller omits it", async () => {
+    await callWithRetries(["test", "openai-no-effort"], {
+      model: "openai:o1-mini",
+      messages: [{ role: "user", content: "hi" }],
+    });
+
+    const body = JSON.parse(fetchSpy.mock.calls[0][1].body as string);
+    expect("reasoning_effort" in body).toBe(false);
+  });
 });
 
 // ─── Google (@google/genai) ──────────────────────────────────────────────────

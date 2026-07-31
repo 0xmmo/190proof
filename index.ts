@@ -373,6 +373,7 @@ async function prepareOpenAIPayload(
   const preparedPayload: OpenAIPayload = {
     model: payload.model as GPTModel,
     messages: [],
+    reasoning_effort: payload.reasoningEffort,
     tools: payload.functions?.map((fn) => ({
       type: "function",
       function: fn,

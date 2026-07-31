@@ -464,6 +464,7 @@ export interface OpenAIPayload {
     | "none"
     | "auto"
     | { type: "function"; function: { name: string } };
+  reasoning_effort?: string;
 }
 
 export interface AnthropicAIPayload {
@@ -560,6 +561,14 @@ export interface GenericPayload {
    * adapters. Forwarded as the request body's `provider` field.
    */
   provider?: OpenRouterProviderPreferences;
+  /**
+   * OpenAI-only: forwarded as `reasoning_effort` on the request. Valid values
+   * are model-dependent (`none`/`minimal`/`low`/`medium`/`high`/`xhigh`/`max`).
+   * Reasoning-by-default models (gpt-5.6 family) 400 on /chat/completions when
+   * function tools are present unless this is explicitly `"none"` — their
+   * implicit default is `medium`. Ignored by all other adapters.
+   */
+  reasoningEffort?: string;
   /**
    * Per-request HTTP timeout in ms for the underlying provider call (applied
    * per attempt, not across retries). Honored by all adapters (Anthropic,
