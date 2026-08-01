@@ -1855,7 +1855,13 @@ function prepareOpenRouterPayload(payload: GenericPayload): OpenRouterPayload {
       : undefined,
     temperature: payload.temperature,
     provider: payload.provider,
-    reasoning_effort: payload.reasoningEffort,
+    // Nested form is OpenRouter's canonical param and the only one that
+    // accepts "max" (flat reasoning_effort rejects it — OpenAI enum tops out
+    // at xhigh, and measured on gpt-5.6-luna nested max buys more reasoning
+    // tokens than xhigh despite the docs calling them equivalent).
+    reasoning: payload.reasoningEffort
+      ? { effort: payload.reasoningEffort }
+      : undefined,
   };
 }
 

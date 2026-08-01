@@ -447,7 +447,12 @@ export interface OpenRouterPayload {
     | { type: "function"; function: { name: string } };
   temperature?: number;
   provider?: OpenRouterProviderPreferences;
-  reasoning_effort?: string;
+  /**
+   * OpenRouter-canonical reasoning config. The nested form is the only one
+   * that accepts effort "max"; the flat `reasoning_effort` compat field caps
+   * at "xhigh".
+   */
+  reasoning?: { effort: string };
   /** Set by the adapter, never by callers: SSE streaming on/off. */
   stream?: boolean;
   /**
@@ -563,14 +568,17 @@ export interface GenericPayload {
    */
   provider?: OpenRouterProviderPreferences;
   /**
-   * OpenAI and OpenRouter: forwarded as `reasoning_effort` on the request.
-   * Valid values are model-dependent
+   * OpenAI and OpenRouter reasoning effort. Valid values are model-dependent
    * (`none`/`minimal`/`low`/`medium`/`high`/`xhigh`/`max`).
-   * Direct OpenAI: reasoning-by-default models (gpt-5.6 family) 400 on
-   * /chat/completions when function tools are present unless this is
-   * explicitly `"none"` — their implicit default is `medium`. Via OpenRouter
-   * the same models accept tools at any effort (OpenRouter fronts
-   * /v1/responses), so omitting this runs them at their native default.
+   * OpenRouter: sent as the nested `reasoning: { effort }` object (the
+   * canonical form, and the only one where `max` is accepted — flat
+   * `reasoning_effort` caps at `xhigh`, and on gpt-5.6-luna nested `max`
+   * measurably out-reasons `xhigh` despite docs calling them aliases).
+   * Direct OpenAI: sent flat as `reasoning_effort`; `max` is rejected there,
+   * and reasoning-by-default models (gpt-5.6 family) 400 on /chat/completions
+   * when function tools are present unless this is explicitly `"none"` —
+   * their implicit default is `medium`. Via OpenRouter the same models accept
+   * tools at any effort (OpenRouter fronts /v1/responses).
    * Ignored by all other adapters.
    */
   reasoningEffort?: string;

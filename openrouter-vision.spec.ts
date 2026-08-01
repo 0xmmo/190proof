@@ -204,25 +204,27 @@ test("non-streaming transport degrades the same way", async () => {
   expect(requestBodies[1].messages).toEqual([LEGACY_MESSAGE]);
 });
 
-// ─── reasoning_effort passthrough (same harness, not image-specific) ─────────
+// ─── reasoning effort passthrough (same harness, not image-specific) ─────────
 
-test("reasoningEffort is forwarded as reasoning_effort", async () => {
+test("reasoningEffort is forwarded as nested reasoning.effort", async () => {
   respond = (_attempt, res) => sseAnswer(res, "ok");
   await callWithRetries(
     "spec",
     payload({
       messages: [{ role: "user", content: "hello" }],
-      reasoningEffort: "low",
+      reasoningEffort: "max",
     }),
   );
-  expect(requestBodies[0].reasoning_effort).toBe("low");
+  expect(requestBodies[0].reasoning).toEqual({ effort: "max" });
+  expect("reasoning_effort" in requestBodies[0]).toBe(false);
 });
 
-test("body carries no reasoning_effort key when the caller omits it", async () => {
+test("body carries no reasoning key when the caller omits it", async () => {
   respond = (_attempt, res) => sseAnswer(res, "ok");
   await callWithRetries(
     "spec",
     payload({ messages: [{ role: "user", content: "hello" }] }),
   );
+  expect("reasoning" in requestBodies[0]).toBe(false);
   expect("reasoning_effort" in requestBodies[0]).toBe(false);
 });
