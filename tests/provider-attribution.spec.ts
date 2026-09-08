@@ -8,8 +8,8 @@
  * own spec file so the mock doesn't leak into the live-API integration tests.
  */
 import axios from "axios";
-import { callWithRetries } from "./index";
-import { GenericPayload } from "./interfaces";
+import { callWithRetries } from "../src/index";
+import { GenericPayload } from "../src/interfaces";
 
 jest.mock("axios");
 const mockedPost = axios.post as unknown as jest.Mock;

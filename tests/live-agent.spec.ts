@@ -16,13 +16,13 @@
  */
 import * as fs from "fs";
 import * as path from "path";
-import { callWithRetries } from "./index";
+import { callWithRetries } from "../src/index";
 import {
   GenericMessage,
   GenericPayload,
   FunctionDefinition,
   ParsedResponseMessage,
-} from "./interfaces";
+} from "../src/interfaces";
 
 jest.setTimeout(120000);
 

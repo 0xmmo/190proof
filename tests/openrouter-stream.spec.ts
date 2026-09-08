@@ -20,8 +20,8 @@ import {
   callWithRetries,
   OPENROUTER_STREAM_TIMEOUT_MS,
   OPENROUTER_NONSTREAM_TIMEOUT_MS,
-} from "./index";
-import { GenericPayload } from "./interfaces";
+} from "../src/index";
+import { GenericPayload } from "../src/interfaces";
 
 type Responder = (req: http.IncomingMessage, res: http.ServerResponse, body: any) => void;
 

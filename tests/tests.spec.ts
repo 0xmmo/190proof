@@ -1,5 +1,5 @@
-import { callWithRetries } from "./index";
-import { AnthropicAIConfig, GenericPayload, OpenAIConfig } from "./interfaces";
+import { callWithRetries } from "../src/index";
+import { AnthropicAIConfig, GenericPayload, OpenAIConfig } from "../src/interfaces";
 
 jest.setTimeout(60000); // Increase timeout to 60s
 

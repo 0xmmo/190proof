@@ -9,8 +9,8 @@
 import http from "http";
 import { AddressInfo } from "net";
 
-import { callWithRetries, MIN_STREAM_ATTEMPT_MS } from "./index";
-import { GenericPayload } from "./interfaces";
+import { callWithRetries, MIN_STREAM_ATTEMPT_MS } from "../src/index";
+import { GenericPayload } from "../src/interfaces";
 
 let server: http.Server;
 let attempts: number;

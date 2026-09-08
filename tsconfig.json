@@ -11,6 +11,6 @@
     "moduleResolution": "node",
     "types": ["jest", "node"]
   },
-  "include": ["shared/**/*", "backend/**/*"],
+  "include": ["src/**/*", "tests/**/*"],
   "exclude": ["node_modules"]
 }

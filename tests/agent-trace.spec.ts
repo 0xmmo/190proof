@@ -13,8 +13,8 @@
 import * as fs from "fs";
 import * as path from "path";
 import axios from "axios";
-import { callWithRetries } from "./index";
-import { GenericMessage } from "./interfaces";
+import { callWithRetries } from "../src/index";
+import { GenericMessage } from "../src/interfaces";
 
 jest.mock("axios");
 

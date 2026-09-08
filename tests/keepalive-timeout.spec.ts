@@ -2,7 +2,7 @@ import http from "http";
 import { AddressInfo } from "net";
 import axios from "axios";
 
-import { callWithRetries } from "./index";
+import { callWithRetries } from "../src/index";
 
 /**
  * Repro for the 2026-07-26 walltime rescue (+8617812787627, poster request):

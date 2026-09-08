@@ -8,8 +8,8 @@
  * consumers rely on; live round-trip behaviour is covered in tests.spec.ts.
  */
 import axios from "axios";
-import { callWithRetries } from "./index";
-import { GenericMessage, GenericPayload, FunctionDefinition } from "./interfaces";
+import { callWithRetries } from "../src/index";
+import { GenericMessage, GenericPayload, FunctionDefinition } from "../src/interfaces";
 
 jest.mock("axios");
 

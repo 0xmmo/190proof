@@ -12,8 +12,8 @@
 import http from "http";
 import { AddressInfo } from "net";
 
-import { callWithRetries, openRouterImageRejectedModels } from "./index";
-import { GenericPayload } from "./interfaces";
+import { callWithRetries, openRouterImageRejectedModels } from "../src/index";
+import { GenericPayload } from "../src/interfaces";
 
 let server: http.Server;
 let requestBodies: any[];

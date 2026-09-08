@@ -10,8 +10,8 @@
 import http from "http";
 import { AddressInfo } from "net";
 
-import { callWithRetries } from "./index";
-import { GenericPayload } from "./interfaces";
+import { callWithRetries } from "../src/index";
+import { GenericPayload } from "../src/interfaces";
 
 let server: http.Server;
 let requestBodies: any[];
