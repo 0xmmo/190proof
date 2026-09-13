@@ -2127,6 +2127,18 @@ async function callOpenRouterStream(
   let finishReason: string | null = null;
   let sawDone = false;
   let dataChunks = 0;
+  // Bounded raw capture for the empty-completion log line: the first few KB
+  // and last KB of data lines, plus every delta/choice key the parser does
+  // not consume. Exists to diagnose providers that report completion tokens
+  // while emitting nothing we read (Friendli on glm-5.3-flash, 2026-09-13).
+  const RAW_HEAD_MAX = 3000;
+  const RAW_TAIL_MAX = 1500;
+  let rawHead = "";
+  let rawTail = "";
+  let generationId: string | undefined;
+  const unreadKeys = new Set<string>();
+  const KNOWN_DELTA_KEYS = new Set(["role", "content", "reasoning", "reasoning_details", "tool_calls"]);
+  const KNOWN_CHOICE_KEYS = new Set(["index", "delta", "finish_reason", "native_finish_reason", "logprobs"]);
 
   try {
     armStallTimer(); // covers connect + time to first token
@@ -2190,6 +2202,12 @@ async function callOpenRouterStream(
           break outer;
         }
 
+        if (rawHead.length < RAW_HEAD_MAX) {
+          rawHead += dataStr.slice(0, RAW_HEAD_MAX - rawHead.length) + "\n";
+        } else {
+          rawTail = (rawTail + dataStr + "\n").slice(-RAW_TAIL_MAX);
+        }
+
         let json: any;
         try {
           json = JSON.parse(dataStr);
@@ -2219,6 +2237,7 @@ async function callOpenRouterStream(
         }
 
         if (json.provider) provider = json.provider;
+        if (json.id && !generationId) generationId = json.id;
         let useful = false;
         if (json.usage) {
           usage = json.usage;
@@ -2227,6 +2246,12 @@ async function callOpenRouterStream(
         const choice = json.choices?.[0];
         if (choice) {
           const delta = choice.delta ?? {};
+          for (const k of Object.keys(choice)) {
+            if (!KNOWN_CHOICE_KEYS.has(k) && choice[k] != null) unreadKeys.add(`choice.${k}`);
+          }
+          for (const k of Object.keys(delta)) {
+            if (!KNOWN_DELTA_KEYS.has(k) && delta[k] != null && delta[k] !== "") unreadKeys.add(`delta.${k}`);
+          }
           if (delta.content) {
             paragraph += delta.content;
             useful = true;
@@ -2292,6 +2317,11 @@ async function callOpenRouterStream(
           paragraph: paragraph.slice(0, 500),
           reasoningChars: reasoning.length,
           toolCalls,
+          generationId,
+          dataChunks,
+          unreadKeys: [...unreadKeys],
+          rawHead,
+          rawTail: rawTail || undefined,
         }),
     });
   } catch (error: any) {
