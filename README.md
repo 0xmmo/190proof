@@ -323,6 +323,19 @@ interface ParsedResponseMessage {
 }
 ```
 
+### `setLogger(sink | null)`
+
+190proof logs each call and retry to the console. Route those lines to your own logger, or pass `null` to silence them (useful when 190proof is a dependency of a library):
+
+```typescript
+import { setLogger } from "190proof";
+
+setLogger(null); // silent
+setLogger({ log: myLog.info, warn: myLog.warn, error: myLog.error });
+```
+
+Errors thrown by `callWithRetries` never carry the HTTP request (and so never the API key); provider status and response body stay on `error.response`.
+
 ### `parseModelString(model)`
 
 Parses a model string into its provider and model ID components.

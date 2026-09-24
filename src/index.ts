@@ -25,7 +25,7 @@ import {
   AnyModel,
   Provider,
 } from "./interfaces";
-import logger, { Identifier } from "./logger";
+import logger, { Identifier, redactError } from "./logger";
 import {
   BedrockRuntimeClient,
   InvokeModelCommand,
@@ -35,6 +35,8 @@ import { isHeicImage, timeout } from "./utils";
 
 const sharp = require("sharp");
 const decode = require("heic-decode");
+
+export { setLogger, redactError, type LogSink } from "./logger";
 
 export {
   ClaudeModel,
@@ -137,7 +139,7 @@ async function withRetries<T>(
         logger.error(
           identifier,
           `Retry #${attempt} error: ${error.message}`,
-          error.response?.data || error,
+          error.response?.data || redactError(error),
         );
       }
 
@@ -157,7 +159,7 @@ async function withRetries<T>(
   const error = new Error(
     `Failed to call ${apiName} API after ${retries} attempts: ${detail}`,
   ) as any;
-  error.cause = lastError;
+  error.cause = redactError(lastError);
   throw error;
 }
 
@@ -772,7 +774,7 @@ async function callOpenAiWithRetries(
         logger.error(
           id,
           `Retry #${attempt} error: ${error.message}`,
-          error.response?.data || error.data || error,
+          error.response?.data || error.data || redactError(error),
         );
 
         // Remove images on content policy violation
@@ -1556,7 +1558,7 @@ async function callGoogleAIWithRetries(
         const fetchError = new Error(
           "Google AI could not fetch the provided image URL(s).",
         ) as any;
-        fetchError.cause = error;
+        fetchError.cause = redactError(error);
         fetchError.googleFetchFailure = true;
         throw fetchError;
       }
@@ -2769,7 +2771,7 @@ export async function callWithRetries(
     return result;
   } catch (error) {
     // Caller cancelled — reject immediately, never fall back to another model.
-    if (aiPayload.signal?.aborted) throw error;
+    if (aiPayload.signal?.aborted) throw redactError(error);
     if (aiPayload.fallbackModel) {
       logger.error(
         id,
@@ -2794,6 +2796,8 @@ export async function callWithRetries(
         chunkTimeoutMs,
       );
     }
-    throw error;
+    // The public boundary: whatever an adapter threw, never let request
+    // config (API-key headers) escape to the caller's logs.
+    throw redactError(error);
   }
 }
