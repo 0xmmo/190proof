@@ -131,6 +131,7 @@ test("streams content, captures provider + usage from the final chunk", async ()
         completion_tokens: 7,
         total_tokens: 18,
         prompt_tokens_details: { cached_tokens: 3 },
+        cost: 0.0000123,
       },
     });
     DONE(res);
@@ -144,6 +145,7 @@ test("streams content, captures provider + usage from the final chunk", async ()
     completion_tokens: 7,
     total_tokens: 18,
     cached_tokens: 3,
+    cost: 0.0000123,
   });
   // the request actually asked for a stream + usage accounting
   expect(lastRequestBody.stream).toBe(true);
@@ -610,7 +612,7 @@ test("streaming:false uses the axios transport with the hard deadline", async ()
     ),
   ).rejects.toThrow(/hard deadline of 400ms/);
   expect(lastRequestBody.stream).toBeUndefined();
-  expect(lastRequestBody.usage).toBeUndefined();
+  expect(lastRequestBody.usage).toEqual({ include: true }); // billed cost comes back in usage
 });
 
 test("streaming:false happy path still parses provider/usage/tool calls", async () => {

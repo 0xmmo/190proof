@@ -1126,6 +1126,7 @@ async function callAnthropic(
       completion_tokens: data.usage.output_tokens,
       total_tokens: promptTokens + data.usage.output_tokens,
       cached_tokens: cacheRead,
+      cache_write_tokens: cacheWrite,
     };
   }
 
@@ -1988,6 +1989,8 @@ function finalizeOpenRouterMessage(
       completion_tokens: number;
       total_tokens: number;
       prompt_tokens_details?: { cached_tokens?: number };
+      /** USD billed, present because requests send usage: { include: true }. */
+      cost?: number;
     } | null;
     /** Whole response (or a summary of the stream) for the failure log. */
     forLog: () => string;
@@ -2047,6 +2050,7 @@ function finalizeOpenRouterMessage(
           completion_tokens: raw.usage.completion_tokens,
           total_tokens: raw.usage.total_tokens,
           cached_tokens: raw.usage.prompt_tokens_details?.cached_tokens ?? 0,
+          cost: typeof raw.usage.cost === "number" ? raw.usage.cost : undefined,
         }
       : null,
   };
@@ -2425,7 +2429,7 @@ async function callOpenRouterNonStreaming(
     requestTimeoutMs,
     signal,
     (mergedSignal) =>
-      axios.post(openRouterEndpoint(), payload, {
+      axios.post(openRouterEndpoint(), { ...payload, usage: { include: true } }, {
         headers: {
           "content-type": "application/json",
           Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,

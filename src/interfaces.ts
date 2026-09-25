@@ -345,6 +345,17 @@ export interface ParsedResponseMessage {
      * when the provider reports none.
      */
     thoughts_tokens?: number;
+    /**
+     * Prompt tokens written to the provider's cache (subset of prompt_tokens).
+     * Billed above the plain input rate on Anthropic (1.25x 5m, 2x 1h).
+     * Currently populated from Anthropic's `cache_creation_input_tokens`.
+     */
+    cache_write_tokens?: number;
+    /**
+     * USD actually billed for this call, as reported by the provider.
+     * Currently populated from OpenRouter's `usage.cost`; undefined elsewhere.
+     */
+    cost?: number;
   } | null;
 }
 
