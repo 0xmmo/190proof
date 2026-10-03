@@ -1865,6 +1865,8 @@ function prepareOpenRouterPayload(payload: GenericPayload): OpenRouterPayload {
     reasoning: payload.reasoningEffort
       ? { effort: payload.reasoningEffort }
       : undefined,
+    session_id: payload.sessionId,
+    user: payload.user,
   };
 }
 

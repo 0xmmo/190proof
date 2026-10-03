@@ -471,6 +471,8 @@ export interface OpenRouterPayload {
    * flag, which makes the final SSE chunk carry the `usage` object.
    */
   usage?: { include: boolean };
+  session_id?: string;
+  user?: string;
 }
 
 export interface OpenAIPayload {
@@ -640,6 +642,19 @@ export interface GenericPayload {
    * fetch/axios/SDK call, mirroring `requestTimeoutMs`.
    */
   signal?: AbortSignal;
+  /**
+   * OpenRouter-only: forwarded as `session_id` (max 256 chars). Groups related
+   * requests and acts as the sticky-routing key, so a session keeps hitting
+   * the same provider (better prompt-cache hits).
+   * https://openrouter.ai/docs/api-reference/chat-completion
+   */
+  sessionId?: string;
+  /**
+   * OpenRouter-only: forwarded as `user` — a stable end-user id. OpenRouter
+   * hashes it before passing it upstream, so provider abuse blocks hit that
+   * user instead of the whole account.
+   */
+  user?: string;
 }
 
 export interface OpenAIBody {
