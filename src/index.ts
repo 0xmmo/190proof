@@ -2159,6 +2159,11 @@ async function callOpenRouterStream(
       body: JSON.stringify({ ...payload, stream: true, usage: { include: true } }),
       signal: signal ? anySignal([controller.signal, signal]) : controller.signal,
     });
+    // OpenRouter sends the generation id as a header before any body byte, so
+    // a stall with 0 chunks still has one: GET /api/v1/generation?id=<id>
+    // names the provider that hung (verified 2026-10-05: resolves ~15s after a
+    // cancelled stream, with provider_name and cancelled:true).
+    generationId = response.headers.get("x-generation-id") ?? undefined;
 
     if (!response.ok) {
       let data: any;
@@ -2369,11 +2374,15 @@ async function callOpenRouterStream(
       // Nothing salvageable: say how much generation is being thrown away, so
       // wasted spend is visible (aborted attempts write no usage record —
       // OpenRouter only sends `usage` in the final chunk we never receive).
+      // gen=none means no response headers ever arrived: the hang was before
+      // OpenRouter answered, not at an upstream provider.
       logger.error(
         id,
-        `${abortReason} — discarding ~${estimateTokens(paragraph + reasoning)} generated tokens (content ${paragraph.length} chars, reasoning ${reasoning.length} chars, ${dataChunks} chunks)`,
+        `${abortReason} — discarding ~${estimateTokens(paragraph + reasoning)} generated tokens (content ${paragraph.length} chars, reasoning ${reasoning.length} chars, ${dataChunks} chunks, gen=${generationId ?? "none"})`,
       );
-      throw new Error(abortReason);
+      const abortError = new Error(abortReason) as any;
+      abortError.generationId = generationId;
+      throw abortError;
     }
     throw error;
   } finally {

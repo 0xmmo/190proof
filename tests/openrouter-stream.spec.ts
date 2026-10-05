@@ -20,6 +20,7 @@ import {
   callWithRetries,
   OPENROUTER_STREAM_TIMEOUT_MS,
   OPENROUTER_NONSTREAM_TIMEOUT_MS,
+  setLogger,
 } from "../src/index";
 import { GenericPayload } from "../src/interfaces";
 
@@ -376,6 +377,32 @@ test("a mid-generation stall dies within one stall window, not the total budget"
     ),
   ).rejects.toThrow(/no useful chunk for 300ms/);
   expect(Date.now() - startedAt).toBeLessThan(2_000);
+});
+
+test("a 0-chunk stall logs the X-Generation-Id header (gen=none without one)", async () => {
+  const errors: string[] = [];
+  setLogger({ log: () => {}, warn: () => {}, error: (m) => errors.push(m) });
+  try {
+    let withHeader = true;
+    respond = (_req, res) => {
+      res.writeHead(200, {
+        "content-type": "text/event-stream",
+        ...(withHeader ? { "x-generation-id": "gen-stall-123" } : {}),
+      });
+      every(40, () => res.write(": OPENROUTER PROCESSING\n\n"));
+    };
+    const discardLine = () => errors.find((m) => m.includes("discarding ~"));
+
+    await expect(callWithRetries("spec", payload(), undefined, 1, 300)).rejects.toThrow();
+    expect(discardLine()).toMatch(/0 chunks, gen=gen-stall-123\)/);
+
+    errors.length = 0;
+    withHeader = false;
+    await expect(callWithRetries("spec", payload(), undefined, 1, 300)).rejects.toThrow();
+    expect(discardLine()).toMatch(/0 chunks, gen=none\)/);
+  } finally {
+    setLogger(console);
+  }
 });
 
 // ─── total deadline ─────────────────────────────────────────────────────────
