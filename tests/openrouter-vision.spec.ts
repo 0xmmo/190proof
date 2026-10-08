@@ -105,6 +105,32 @@ test("image attachment: text part (with URL ref) + image_url part", async () => 
   ]);
 });
 
+test("pixelUrl: pixels come from the copy, the Image (url) ref keeps the original", async () => {
+  respond = (_attempt, res) => sseAnswer(res, "a cat");
+  const COPY_URL = "https://attachments.olly.bot/abc.800.jpg";
+  await callWithRetries(
+    "spec",
+    payload({
+      messages: [
+        {
+          role: "user",
+          content: "What is this?",
+          files: [{ mimeType: "image/jpeg", url: IMAGE_URL, pixelUrl: COPY_URL }],
+        },
+      ],
+    }),
+  );
+  expect(requestBodies[0].messages).toEqual([
+    {
+      role: "user",
+      content: [
+        { type: "text", text: LEGACY_MESSAGE.content },
+        { type: "image_url", image_url: { url: COPY_URL } },
+      ],
+    },
+  ]);
+});
+
 test("base64-only image becomes a data: URI part instead of being dropped", async () => {
   respond = (_attempt, res) => sseAnswer(res, "green");
   await callWithRetries(

@@ -173,7 +173,14 @@ export interface ToolResult {
 
 export interface File {
   mimeType: string;
+  /** Remote file. For images, also the URL quoted in the `Image (url)` reference. */
   url?: string;
+  /**
+   * Images only: where the model's pixels are fetched from, when that differs
+   * from `url` (e.g. a downsized copy). The `Image (url)` reference keeps `url`,
+   * so the model can still hand the original to tools. Defaults to `url`.
+   */
+  pixelUrl?: string;
   data?: string;
 }
 

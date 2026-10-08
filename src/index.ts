@@ -411,7 +411,7 @@ async function prepareOpenAIPayload(
         if (file.url) {
           contentBlocks.push({
             type: "image_url",
-            image_url: { url: file.url },
+            image_url: { url: file.pixelUrl || file.url },
           });
           contentBlocks.push({ type: "text", text: `Image (${file.url})` });
         } else if (file.data) {
@@ -912,7 +912,10 @@ async function prepareAnthropicPayload(
               source: {
                 type: "base64",
                 media_type: "image/png",
-                data: await getNormalizedBase64PNG(file.url, file.mimeType),
+                data: await getNormalizedBase64PNG(
+                  file.pixelUrl || file.url,
+                  file.mimeType,
+                ),
               },
             });
           }
@@ -1279,7 +1282,7 @@ async function prepareGoogleAIPayload(
           parts.push({
             fileData: {
               mimeType: file.mimeType,
-              fileUri: file.url,
+              fileUri: file.pixelUrl || file.url,
             },
           });
           parts.push({ text: `Image (${file.url})` });
@@ -1679,7 +1682,10 @@ function prepareOpenAICompatMessages(
         .map((file) => ({
           type: "image_url",
           image_url: {
-            url: file.url || `data:${file.mimeType};base64,${file.data}`,
+            url:
+              file.pixelUrl ||
+              file.url ||
+              `data:${file.mimeType};base64,${file.data}`,
           },
         }));
       if (imageBlocks.length) {
