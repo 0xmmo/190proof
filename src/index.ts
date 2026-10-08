@@ -835,13 +835,22 @@ function jigAnthropicMessages(
           ? []
           : [{ type: "text", text: "\n\n---\n\n" }];
 
-      lastMessage.content = [...lastContent, ...separator, ...newContent];
+      // Replace, never mutate: the caller's message objects are reused on
+      // every retry, and an in-place merge re-appends the follower's blocks
+      // each attempt (duplicate tool_use ids → 400 from attempt 2 on).
+      acc[acc.length - 1] = {
+        ...lastMessage,
+        content: [...lastContent, ...separator, ...newContent],
+      };
       return acc;
     }
 
     // Convert string content to text content block
     if (typeof message.content === "string") {
-      message.content = [{ type: "text", text: message.content }];
+      return [
+        ...acc,
+        { ...message, content: [{ type: "text", text: message.content }] },
+      ];
     }
 
     return [...acc, message];
