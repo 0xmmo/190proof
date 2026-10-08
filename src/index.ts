@@ -857,6 +857,18 @@ function jigAnthropicMessages(
   return jiggedMessages;
 }
 
+/** Anthropic `output_config.effort` values; other reasoningEffort values are dropped. */
+const ANTHROPIC_EFFORTS = ["low", "medium", "high", "xhigh", "max"];
+
+/**
+ * Anthropic API output cap. Thinking tokens count toward it, and adaptive-
+ * thinking models think by default: claude-haiku-5-5 hit the old 4096 on a
+ * ~2000-word report (cut mid-sentence) and on a single-file HTML tool call
+ * (tool_use input truncated to `{}`), at effort low as well (needs ~7k).
+ * Non-streaming, so it must finish within requestTimeoutMs (default 120s).
+ */
+const ANTHROPIC_MAX_TOKENS = 16_000;
+
 async function prepareAnthropicPayload(
   _identifier: Identifier,
   payload: GenericPayload,
@@ -873,6 +885,9 @@ async function prepareAnthropicPayload(
       ? typeof payload.function_call === "string"
         ? { type: payload.function_call }
         : { type: "tool", name: payload.function_call.name }
+      : undefined,
+    effort: ANTHROPIC_EFFORTS.includes(payload.reasoningEffort as string)
+      ? payload.reasoningEffort
       : undefined,
   };
 
@@ -1042,7 +1057,10 @@ async function callAnthropic(
             tool_choice: cachedTools?.length ? payload.tool_choice : undefined,
             temperature: payload.temperature,
             system: payload.system,
-            max_tokens: 4096,
+            max_tokens: ANTHROPIC_MAX_TOKENS,
+            output_config: payload.effort
+              ? { effort: payload.effort }
+              : undefined,
           },
           {
             headers: {
@@ -1063,6 +1081,14 @@ async function callAnthropic(
   if (!answers?.[0]) {
     logger.error(id, "Missing answer in Anthropic API response:", data);
     throw new Error("Missing answer in Anthropic API");
+  }
+  // A truncated reply still parses: cut-off text, or a tool_use whose input
+  // came back as `{}`. Surface it rather than pass it off as complete.
+  if (data.stop_reason === "max_tokens") {
+    logger.warn(
+      id,
+      `Anthropic response hit max_tokens (${data.usage?.output_tokens} output tokens, last block ${answers[answers.length - 1]?.type})`,
+    );
   }
 
   let textResponse = "";

@@ -330,6 +330,29 @@ describe("Anthropic serialization", () => {
       { type: "tool_result", tool_use_id: "call_2", content: '{"tempC":15}' },
     ]);
   });
+
+  test("reasoningEffort → output_config.effort; 16k output cap", async () => {
+    await callWithRetries(["test", "anthropic-effort"], {
+      model: "anthropic:claude-haiku-5-5",
+      messages: [{ role: "user", content: "hi" }],
+      reasoningEffort: "low",
+    });
+    const body = mockedPost.mock.calls[0][1];
+    expect(body.output_config).toEqual({ effort: "low" });
+    expect(body.max_tokens).toBe(16000);
+  });
+
+  test.each([undefined, "none", "minimal"])(
+    "reasoningEffort %s → no output_config",
+    async (reasoningEffort) => {
+      await callWithRetries(["test", "anthropic-no-effort"], {
+        model: "anthropic:claude-haiku-4-5",
+        messages: [{ role: "user", content: "hi" }],
+        reasoningEffort,
+      });
+      expect(mockedPost.mock.calls[0][1].output_config).toBeUndefined();
+    },
+  );
 });
 
 // ─── OpenAI (fetch) ──────────────────────────────────────────────────────────

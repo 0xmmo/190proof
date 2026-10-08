@@ -500,6 +500,8 @@ export interface AnthropicAIPayload {
   temperature?: number;
   system?: string;
   tool_choice?: { type: "none" | "auto" } | { type: "tool"; name: string };
+  /** Sent as `output_config.effort` (adaptive-thinking models). */
+  effort?: string;
 }
 
 export interface GoogleAITextPart {
@@ -599,6 +601,10 @@ export interface GenericPayload {
    * when function tools are present unless this is explicitly `"none"` —
    * their implicit default is `medium`. Via OpenRouter the same models accept
    * tools at any effort (OpenRouter fronts /v1/responses).
+   * Anthropic: sent as `output_config.effort` when it is one of
+   * `low`/`medium`/`high`/`xhigh`/`max` (adaptive-thinking models, e.g.
+   * claude-haiku-5-5); other values are dropped, and older models like
+   * claude-haiku-4-5 400 on any effort, so leave it unset for them.
    * Ignored by all other adapters.
    */
   reasoningEffort?: string;

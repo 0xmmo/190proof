@@ -18,7 +18,7 @@ type ModelConfig = {
 const modelConfigs: ModelConfig[] = [
   { provider: "Groq", model: "groq:qwen/qwen3-32b" },
   { provider: "OpenAI", model: "openai:gpt-5-mini" },
-  { provider: "Anthropic", model: "anthropic:claude-haiku-4-5" },
+  { provider: "Anthropic", model: "anthropic:claude-haiku-5-5" },
   { provider: "Gemini", model: "google:gemini-3.1-flash-lite-preview" },
   { provider: "OpenRouter", model: "openrouter:google/gemma-4-31b-it" },
   // codex-server (OpenAI-compatible facade over OpenAI's codex CLI).
