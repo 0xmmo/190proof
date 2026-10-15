@@ -648,6 +648,15 @@ export interface GenericPayload {
    */
   streamDeadlineAt?: number;
   /**
+   * OpenRouter-only: called once per attempt that OpenRouter can bill but
+   * whose `usage` never reaches the caller — a deadline-truncated answer, a
+   * stalled, timed-out or cancelled stream, a response that failed to parse —
+   * with the generation id to price it by (GET /api/v1/generation?id=).
+   * Attempts that never got an id (no response headers) aren't reported.
+   * Exceptions thrown by the callback are swallowed.
+   */
+  onUnbilledGeneration?: (generation: { generationId: string; reason: string }) => void;
+  /**
    * Optional caller-supplied cancellation signal. When it aborts, the in-flight
    * provider request is cancelled and `callWithRetries` rejects immediately —
    * it does NOT retry or fall back (both retry loop and fallback branch bail on

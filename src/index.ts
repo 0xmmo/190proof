@@ -2372,6 +2372,7 @@ async function callOpenRouterStream(
   streamTimeoutMs: number = OPENROUTER_STREAM_TIMEOUT_MS,
   chunkTimeoutMs: number = 15_000,
   signal?: AbortSignal,
+  attempt: OpenRouterAttempt = {},
 ): Promise<ParsedResponseMessage> {
   const controller = new AbortController();
   // Why the reason is tracked out-of-band: fetch/reader surface any abort as a
@@ -2454,6 +2455,7 @@ async function callOpenRouterStream(
     // names the provider that hung (verified 2026-10-05: resolves ~15s after a
     // cancelled stream, with provider_name and cancelled:true).
     generationId = response.headers.get("x-generation-id") ?? undefined;
+    attempt.generationId = generationId;
 
     if (!response.ok) {
       let data: any;
@@ -2540,7 +2542,7 @@ async function callOpenRouterStream(
         }
 
         if (json.provider) provider = json.provider;
-        if (json.id && !generationId) generationId = json.id;
+        if (json.id && !generationId) generationId = attempt.generationId = json.id;
         let useful = false;
         if (json.usage) {
           usage = json.usage;
@@ -2724,6 +2726,7 @@ async function callOpenRouterNonStreaming(
   payload: OpenRouterPayload,
   requestTimeoutMs: number = OPENROUTER_NONSTREAM_TIMEOUT_MS,
   signal?: AbortSignal,
+  attempt: OpenRouterAttempt = {},
 ): Promise<ParsedResponseMessage> {
   const response = await withRequestDeadline(
     "OpenRouter",
@@ -2740,6 +2743,8 @@ async function callOpenRouterNonStreaming(
       }),
   );
 
+  attempt.generationId =
+    response.headers?.["x-generation-id"] ?? response.data?.id ?? undefined;
   return parseOpenRouterBody(id, response.data);
 }
 
@@ -2811,6 +2816,11 @@ export const MIN_STREAM_ATTEMPT_MS = 10_000;
  */
 const estimateTokens = (text: string) => Math.round(text.length / 4);
 
+/** Filled in by one OpenRouter attempt as soon as OpenRouter names its generation. */
+interface OpenRouterAttempt {
+  generationId?: string;
+}
+
 interface OpenRouterCallOptions {
   streaming: boolean;
   streamTimeoutMs: number;
@@ -2823,6 +2833,28 @@ interface OpenRouterCallOptions {
    * to have no image-capable endpoints.
    */
   genericMessages?: GenericMessage[];
+  onUnbilledGeneration?: GenericPayload["onUnbilledGeneration"];
+}
+
+/**
+ * OpenRouter only sends `usage` (with its billed `cost`) in a stream's final
+ * chunk or a complete body. Any attempt that ends without handing usage back
+ * — deadline-truncated, stalled, cancelled, unparseable — is still billed, so
+ * report its generation id for the caller to price. HTTP error responses
+ * generated nothing and aren't reported.
+ */
+function reportUnbilledGeneration(
+  id: Identifier,
+  options: Pick<OpenRouterCallOptions, "onUnbilledGeneration">,
+  attempt: OpenRouterAttempt,
+  reason: string,
+) {
+  if (!options.onUnbilledGeneration || !attempt.generationId) return;
+  try {
+    options.onUnbilledGeneration({ generationId: attempt.generationId, reason });
+  } catch (error: any) {
+    logger.error(id, `onUnbilledGeneration threw: ${error?.message ?? error}`);
+  }
 }
 
 /**
@@ -2862,8 +2894,9 @@ async function callOpenRouterWithRetries(
   return withRetries(
     id,
     "OpenRouter",
-    () =>
-      (options.streaming
+    () => {
+      const attempt: OpenRouterAttempt = {};
+      return (options.streaming
         ? (() => {
             const budget = streamAttemptBudgetMs(options);
             if (budget === null) {
@@ -2883,6 +2916,7 @@ async function callOpenRouterWithRetries(
               budget,
               options.chunkTimeoutMs,
               signal,
+              attempt,
             );
           })()
         : callOpenRouterNonStreaming(
@@ -2890,8 +2924,22 @@ async function callOpenRouterWithRetries(
             payload,
             options.requestTimeoutMs,
             signal,
+            attempt,
           )
-      ).catch((error) => {
+      ).then((message) => {
+        if (!message.usage) {
+          reportUnbilledGeneration(
+            id,
+            options,
+            attempt,
+            message.truncated ? "truncated" : "no usage",
+          );
+        }
+        return message;
+      }).catch((error) => {
+        if (!error?.response?.status) {
+          reportUnbilledGeneration(id, options, attempt, error?.message ?? String(error));
+        }
         const slug = moderationEvictionSlug(error, payload);
         if (slug && !evicted.includes(slug)) {
           evicted.push(slug);
@@ -2922,7 +2970,8 @@ async function callOpenRouterWithRetries(
           );
         }
         throw error;
-      }),
+      });
+    },
     { retries, signal },
   );
 }
@@ -3072,6 +3121,7 @@ export async function callWithRetries(
               aiPayload.requestTimeoutMs ?? OPENROUTER_NONSTREAM_TIMEOUT_MS,
             chunkTimeoutMs,
             genericMessages: routingPayload.messages,
+            onUnbilledGeneration: aiPayload.onUnbilledGeneration,
           },
           signal,
         );
