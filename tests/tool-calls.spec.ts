@@ -225,6 +225,7 @@ describe("Anthropic serialization", () => {
   test("thinking + tool_use ordered, tool_result in the next user message", async () => {
     const payload: GenericPayload = {
       model: "anthropic:claude-haiku-4-5",
+      streaming: false, // axios is what is mocked here — pin the non-streaming transport
       messages: toolMessages({
         reasoningDetails: [
           { type: "thinking", thinking: "Let me think", signature: "sig123" },
@@ -274,6 +275,7 @@ describe("Anthropic serialization", () => {
     // match any of the expected tags").
     await callWithRetries(["test", "anthropic-foreign-reasoning"], {
       model: "anthropic:claude-haiku-4-5",
+      streaming: false, // axios is what is mocked here — pin the non-streaming transport
       messages: toolMessages({
         reasoning: "Let me check the weather.",
         reasoningDetails: [
@@ -296,6 +298,7 @@ describe("Anthropic serialization", () => {
   test("mixed reasoningDetails keeps only thinking/redacted_thinking", async () => {
     await callWithRetries(["test", "anthropic-mixed-reasoning"], {
       model: "anthropic:claude-haiku-4-5",
+      streaming: false, // axios is what is mocked here — pin the non-streaming transport
       messages: toolMessages({
         reasoningDetails: [
           { type: "reasoning.text", text: "foreign" },
@@ -316,6 +319,7 @@ describe("Anthropic serialization", () => {
   test("parallel calls → one tool_result block per call, all in one user message", async () => {
     await callWithRetries(["test", "anthropic-parallel"], {
       model: "anthropic:claude-haiku-4-5",
+      streaming: false, // axios is what is mocked here — pin the non-streaming transport
       messages: parallelToolMessages(),
       functions: FUNCTIONS,
     });
@@ -334,6 +338,7 @@ describe("Anthropic serialization", () => {
   test("reasoningEffort → output_config.effort; 16k output cap", async () => {
     await callWithRetries(["test", "anthropic-effort"], {
       model: "anthropic:claude-haiku-5-5",
+      streaming: false, // axios is what is mocked here — pin the non-streaming transport
       messages: [{ role: "user", content: "hi" }],
       reasoningEffort: "low",
     });
@@ -347,6 +352,7 @@ describe("Anthropic serialization", () => {
     async (reasoningEffort) => {
       await callWithRetries(["test", "anthropic-no-effort"], {
         model: "anthropic:claude-haiku-4-5",
+        streaming: false, // axios is what is mocked here — pin the non-streaming transport
         messages: [{ role: "user", content: "hi" }],
         reasoningEffort,
       });

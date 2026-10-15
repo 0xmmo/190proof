@@ -98,6 +98,7 @@ describeIf("real agent trace serialization", () => {
     test("every tool_use is matched by a tool_result (no orphans)", async () => {
       await callWithRetries(["trace", "anthropic"], {
         model: "anthropic:claude-haiku-4-5",
+        streaming: false, // axios is what is mocked here — pin the non-streaming transport
         messages,
       });
       const body = mockedPost.mock.calls[0][1];
