@@ -42,6 +42,7 @@ test("retries send the same Anthropic messages every attempt", async () => {
 
   const payload: GenericPayload = {
     model: "anthropic:claude-haiku-5-5",
+    streaming: false, // axios is the non-streaming transport
     messages: [
       { role: "user", content: "do two things" },
       {

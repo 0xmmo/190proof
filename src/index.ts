@@ -870,13 +870,226 @@ function jigAnthropicMessages(
 const ANTHROPIC_EFFORTS = ["low", "medium", "high", "xhigh", "max"];
 
 /**
- * Anthropic API output cap. Thinking tokens count toward it, and adaptive-
+ * Non-streaming Anthropic output cap. Thinking tokens count toward it, and adaptive-
  * thinking models think by default: claude-haiku-5-5 hit the old 4096 on a
  * ~2000-word report (cut mid-sentence) and on a single-file HTML tool call
  * (tool_use input truncated to `{}`), at effort low as well (needs ~7k).
  * Non-streaming, so it must finish within requestTimeoutMs (default 120s).
  */
 const ANTHROPIC_MAX_TOKENS = 16_000;
+
+/**
+ * Output cap for streamed Anthropic calls, which no request timeout bounds.
+ * claude-haiku-5-5 at effort low spent all 16k on thinking for single-file
+ * HTML app requests and never wrote a word (prod 2026-10-14/15, the fallback
+ * leg after deepseek stalled), ~75s per attempt. Its API cap is 128k.
+ */
+const ANTHROPIC_STREAM_MAX_TOKENS = 64_000;
+
+interface AnthropicStreamOptions {
+  streaming: boolean;
+  streamTimeoutMs: number;
+  streamDeadlineAt?: number;
+  chunkTimeoutMs: number;
+}
+
+/**
+ * Stream one Messages API call and rebuild the non-streaming response body
+ * from its events, so callAnthropic parses both transports the same way.
+ *
+ * Same timers as callOpenRouterStream: `streamTimeoutMs` bounds the attempt,
+ * `chunkTimeoutMs` aborts when no content event arrives. `ping`s don't reset
+ * it. With thinking display "omitted" nothing streams while the model thinks
+ * (a 14s think arrived as one event, probed 2026-10-15), so callers pass
+ * chunkTimeoutMs only when they asked for summarized thinking.
+ */
+async function callAnthropicStream(
+  id: Identifier,
+  body: Record<string, unknown>,
+  headers: Record<string, string>,
+  streamTimeoutMs: number,
+  chunkTimeoutMs: number | undefined,
+  signal?: AbortSignal,
+): Promise<any> {
+  const controller = new AbortController();
+  let abortReason: string | null = null;
+  const abortWith = (reason: string) => {
+    abortReason = reason;
+    controller.abort();
+  };
+  const unref = (t: ReturnType<typeof setTimeout>) => {
+    if (typeof t === "object" && "unref" in t) t.unref();
+    return t;
+  };
+  const totalTimer = unref(
+    setTimeout(
+      () =>
+        abortWith(
+          `Anthropic stream exceeded total deadline of ${streamTimeoutMs}ms`,
+        ),
+      streamTimeoutMs,
+    ),
+  );
+  let stallTimer: ReturnType<typeof setTimeout> | undefined;
+  const armStallTimer = () => {
+    if (chunkTimeoutMs === undefined) return;
+    clearTimeout(stallTimer);
+    stallTimer = unref(
+      setTimeout(
+        () =>
+          abortWith(
+            `Anthropic stream stalled: no useful event for ${chunkTimeoutMs}ms`,
+          ),
+        chunkTimeoutMs,
+      ),
+    );
+  };
+
+  let message: any = null;
+  const toolInputJson = new Map<number, string>();
+  let sawStop = false;
+  let outputChars = 0;
+
+  try {
+    armStallTimer(); // covers connect + time to first event
+    const response = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ ...body, stream: true }),
+      signal: signal ? anySignal([controller.signal, signal]) : controller.signal,
+    });
+
+    if (!response.ok) {
+      let data: any;
+      try {
+        data = await response.json();
+      } catch {
+        data = undefined;
+      }
+      logger.error(id, `Anthropic stream HTTP ${response.status}:`, data);
+      const error = new Error(
+        `Anthropic error: ${data?.error?.message || `HTTP ${response.status}`}`,
+      ) as any;
+      error.response = { status: response.status, data };
+      throw error;
+    }
+    if (!response.body) {
+      throw new Error("Anthropic stream error: no response body");
+    }
+
+    const reader = response.body.getReader();
+    // One decoder in stream mode: CJK split across chunks must not garble.
+    const decoder = new TextDecoder();
+    let lineBuffer = "";
+
+    outer: while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      lineBuffer += decoder.decode(value, { stream: true });
+
+      let newlineIdx: number;
+      while ((newlineIdx = lineBuffer.indexOf("\n")) !== -1) {
+        let line = lineBuffer.slice(0, newlineIdx);
+        lineBuffer = lineBuffer.slice(newlineIdx + 1);
+        if (line.endsWith("\r")) line = line.slice(0, -1);
+        // Each data line carries its own `type`, so the event: lines are redundant.
+        if (!line.startsWith("data:")) continue;
+
+        let event: any;
+        try {
+          event = JSON.parse(line.slice(5).trimStart());
+        } catch {
+          logger.error(
+            id,
+            "Anthropic stream: unparseable data line:",
+            line.slice(0, 200),
+          );
+          continue;
+        }
+
+        switch (event.type) {
+          case "message_start":
+            message = { ...event.message, content: [] };
+            break;
+          case "content_block_start":
+            message.content[event.index] = { ...event.content_block };
+            if (event.content_block.type === "tool_use") {
+              toolInputJson.set(event.index, "");
+            }
+            break;
+          case "content_block_delta": {
+            const block = message.content[event.index];
+            const delta = event.delta;
+            if (delta.type === "text_delta") {
+              block.text += delta.text;
+              outputChars += delta.text.length;
+            } else if (delta.type === "thinking_delta") {
+              block.thinking += delta.thinking;
+              outputChars += delta.thinking.length;
+            } else if (delta.type === "signature_delta") {
+              block.signature = (block.signature ?? "") + delta.signature;
+            } else if (delta.type === "input_json_delta") {
+              toolInputJson.set(
+                event.index,
+                (toolInputJson.get(event.index) ?? "") + delta.partial_json,
+              );
+              outputChars += delta.partial_json.length;
+            }
+            break;
+          }
+          case "content_block_stop": {
+            const json = toolInputJson.get(event.index);
+            if (json !== undefined) {
+              message.content[event.index].input = json ? JSON.parse(json) : {};
+            }
+            break;
+          }
+          case "message_delta":
+            Object.assign(message, event.delta);
+            // usage here is cumulative and carries the final output_tokens.
+            message.usage = { ...message.usage, ...event.usage };
+            break;
+          case "message_stop":
+            sawStop = true;
+            break outer;
+          case "error": {
+            logger.error(id, "Anthropic stream error event:", event.error);
+            const error = new Error(
+              `Anthropic error: ${event.error?.message}`,
+            ) as any;
+            error.response = { data: event };
+            throw error;
+          }
+          default:
+            continue; // ping and unknown events are not progress
+        }
+        armStallTimer();
+      }
+    }
+
+    if (sawStop) reader.cancel().catch(() => {});
+    // The connection died mid-generation: a partial message would pass a
+    // truncated answer off as complete.
+    if (!sawStop) {
+      throw new Error("Anthropic stream error: ended prematurely");
+    }
+    return message;
+  } catch (error: any) {
+    // fetch surfaces our timer aborts as bare AbortErrors; restore the reason.
+    // Caller-signal aborts pass through so the retry loop sees signal.aborted.
+    if (abortReason && !signal?.aborted) {
+      logger.error(
+        id,
+        `${abortReason} — discarding ~${Math.round(outputChars / 4)} streamed tokens (stop_reason ${message?.stop_reason ?? "none"})`,
+      );
+      throw new Error(abortReason);
+    }
+    throw error;
+  } finally {
+    clearTimeout(totalTimer);
+    clearTimeout(stallTimer);
+  }
+}
 
 async function prepareAnthropicPayload(
   _identifier: Identifier,
@@ -1003,6 +1216,7 @@ async function callAnthropic(
   config?: AnthropicAIConfig,
   requestTimeoutMs: number = 120_000,
   signal?: AbortSignal,
+  stream?: { timeoutMs: number; chunkTimeoutMs: number },
 ): Promise<ParsedResponseMessage> {
   const anthropicMessages = jigAnthropicMessages(payload.messages);
   const tools = payload.functions?.map((f) => ({
@@ -1051,39 +1265,53 @@ async function callAnthropic(
           { ...tools[tools.length - 1], cache_control: { type: "ephemeral" } },
         ]
       : tools;
-    const response = await withRequestDeadline(
-      "Anthropic",
-      requestTimeoutMs,
-      signal,
-      (mergedSignal) =>
-        axios.post(
-          "https://api.anthropic.com/v1/messages",
-          {
-            model: payload.model,
-            messages: anthropicMessages,
-            tools: cachedTools,
-            // tool_choice requires tools in the request; drop it otherwise.
-            tool_choice: cachedTools?.length ? payload.tool_choice : undefined,
-            temperature: payload.temperature,
-            system: payload.system,
-            max_tokens: ANTHROPIC_MAX_TOKENS,
-            output_config: payload.effort
-              ? { effort: payload.effort }
-              : undefined,
-          },
-          {
-            headers: {
-              "content-type": "application/json",
-              "x-api-key": process.env.ANTHROPIC_API_KEY as string,
-              "anthropic-version": "2023-06-01",
-              "anthropic-beta": "tools-2024-04-04",
-            },
+    const body: Record<string, unknown> = {
+      model: payload.model,
+      messages: anthropicMessages,
+      tools: cachedTools,
+      // tool_choice requires tools in the request; drop it otherwise.
+      tool_choice: cachedTools?.length ? payload.tool_choice : undefined,
+      temperature: payload.temperature,
+      system: payload.system,
+      max_tokens: stream ? ANTHROPIC_STREAM_MAX_TOKENS : ANTHROPIC_MAX_TOKENS,
+      output_config: payload.effort ? { effort: payload.effort } : undefined,
+    };
+    const headers = {
+      "content-type": "application/json",
+      "x-api-key": process.env.ANTHROPIC_API_KEY as string,
+      "anthropic-version": "2023-06-01",
+      "anthropic-beta": "tools-2024-04-04",
+    };
+    if (stream) {
+      // Summarized thinking streams as it's generated, which keeps the stall
+      // guard honest through long thinks. An effort means an adaptive-thinking
+      // model; without one (e.g. Haiku 4.5, budget_tokens only) leave
+      // `thinking` unset and rely on the total deadline alone.
+      if (payload.effort) {
+        body.thinking = { type: "adaptive", display: "summarized" };
+      }
+      data = await callAnthropicStream(
+        id,
+        body,
+        headers,
+        stream.timeoutMs,
+        payload.effort ? stream.chunkTimeoutMs : undefined,
+        signal,
+      );
+    } else {
+      const response = await withRequestDeadline(
+        "Anthropic",
+        requestTimeoutMs,
+        signal,
+        (mergedSignal) =>
+          axios.post("https://api.anthropic.com/v1/messages", body, {
+            headers,
             timeout: requestTimeoutMs,
             signal: mergedSignal,
-          },
-        ),
-    );
-    data = response.data;
+          }),
+      );
+      data = response.data;
+    }
   }
 
   const answers = data.content;
@@ -1186,11 +1414,32 @@ async function callAnthropicWithRetries(
   retries: number = 5,
   requestTimeoutMs: number = 120_000,
   signal?: AbortSignal,
+  streamOptions?: AnthropicStreamOptions,
 ): Promise<ParsedResponseMessage> {
+  // Bedrock has its own SDK transport and never streams.
+  const streaming =
+    !!streamOptions?.streaming && config?.service !== "bedrock";
   return withRetries(
     id,
     "Anthropic",
-    () => callAnthropic(id, payload, config, requestTimeoutMs, signal),
+    () => {
+      if (!streaming) {
+        return callAnthropic(id, payload, config, requestTimeoutMs, signal);
+      }
+      const budget = streamAttemptBudgetMs(streamOptions!);
+      if (budget === null) {
+        const error = new Error(
+          "Anthropic stream skipped: caller deadline leaves too little time for another attempt",
+        ) as any;
+        error.deadlineExceeded = true;
+        logger.error(id, error.message);
+        return Promise.reject(error);
+      }
+      return callAnthropic(id, payload, config, requestTimeoutMs, signal, {
+        timeoutMs: budget,
+        chunkTimeoutMs: streamOptions!.chunkTimeoutMs,
+      });
+    },
     {
       retries,
       signal,
@@ -2593,7 +2842,9 @@ function isImageInputRejection(error: any): boolean {
  * time left until the caller's absolute deadline. Returns null when too little
  * remains to be worth an attempt.
  */
-function streamAttemptBudgetMs(options: OpenRouterCallOptions): number | null {
+function streamAttemptBudgetMs(
+  options: Pick<OpenRouterCallOptions, "streamTimeoutMs" | "streamDeadlineAt">,
+): number | null {
   if (options.streamDeadlineAt === undefined) return options.streamTimeoutMs;
   const remaining = options.streamDeadlineAt - Date.now();
   if (remaining < MIN_STREAM_ATTEMPT_MS) return null;
@@ -2757,6 +3008,15 @@ export async function callWithRetries(
           retries,
           requestTimeoutMs,
           signal,
+          {
+            // Streams by default like OpenRouter, so long generations get the
+            // stream budget instead of the non-streaming requestTimeoutMs.
+            streaming: aiPayload.streaming ?? true,
+            streamTimeoutMs:
+              aiPayload.streamTimeoutMs ?? OPENROUTER_STREAM_TIMEOUT_MS,
+            streamDeadlineAt: aiPayload.streamDeadlineAt,
+            chunkTimeoutMs,
+          },
         );
         break;
 

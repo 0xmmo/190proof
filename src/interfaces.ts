@@ -617,15 +617,15 @@ export interface GenericPayload {
    */
   requestTimeoutMs?: number;
   /**
-   * OpenRouter-only: stream the completion over SSE instead of waiting for a
-   * single JSON body. Defaults to true. Streaming attempts are bounded by
+   * OpenRouter and Anthropic (not Bedrock): stream the completion over SSE
+   * instead of waiting for a single JSON body. Defaults to true. Streaming attempts are bounded by
    * `streamTimeoutMs` (total) plus a per-useful-chunk stall timeout — NOT by
    * `requestTimeoutMs`, which only governs non-streaming attempts (default
    * 180s for OpenRouter). Set to false to force the old non-streaming path.
    */
   streaming?: boolean;
   /**
-   * OpenRouter-only: total wall-clock budget in ms for one streaming attempt
+   * OpenRouter and Anthropic: total wall-clock budget in ms for one streaming attempt
    * (connect + full generation). Defaults to 600s. Independent of
    * `requestTimeoutMs` by design: a healthy long generation keeps streaming
    * useful chunks and may run far past any sane non-streaming deadline, while
@@ -635,7 +635,7 @@ export interface GenericPayload {
    */
   streamTimeoutMs?: number;
   /**
-   * OpenRouter-only: absolute wall-clock deadline (epoch ms) for the whole
+   * OpenRouter and Anthropic: absolute wall-clock deadline (epoch ms) for the whole
    * call INCLUDING retries — the caller's turn budget, not a per-attempt one.
    * Each streaming attempt gets `min(streamTimeoutMs, deadline - now)`, and
    * once too little time remains to be worth an attempt the call fails fast
