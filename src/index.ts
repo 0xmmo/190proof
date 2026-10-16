@@ -777,9 +777,16 @@ async function callOpenAiWithRetries(
           error.response?.data || error.data || redactError(error),
         );
 
-        // Remove images on content policy violation
-        if (error.data?.code === "content_policy_violation") {
-          logger.log(id, "Removing images due to content policy violation");
+        // Remove images on content policy violation, or when OpenAI can't use
+        // one (invalid_image: e.g. "File urls cannot be larger than 20MB" on a
+        // big GIF). The `Image (url)` text refs stay, so the model still knows
+        // the image exists.
+        const imageErrorCode = error.data?.code;
+        if (
+          imageErrorCode === "content_policy_violation" ||
+          imageErrorCode === "invalid_image"
+        ) {
+          logger.log(id, `Removing images due to ${imageErrorCode}`);
           openAiPayload.messages.forEach((message: OpenAIMessage) => {
             if (Array.isArray(message.content)) {
               message.content = message.content.filter(
