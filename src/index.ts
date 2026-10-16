@@ -3058,9 +3058,11 @@ export async function callWithRetries(
           requestTimeoutMs,
           signal,
           {
-            // Streams by default like OpenRouter, so long generations get the
-            // stream budget instead of the non-streaming requestTimeoutMs.
-            streaming: aiPayload.streaming ?? true,
+            // Opt-in, unlike OpenRouter. By default the API holds each tool
+            // parameter until it's complete, so a long execute_code `code`
+            // arg sends no events for >30s and trips the stall guard on every
+            // retry (prod 2026-10-15, Haiku fallback after deepseek stalled).
+            streaming: aiPayload.streaming ?? false,
             streamTimeoutMs:
               aiPayload.streamTimeoutMs ?? OPENROUTER_STREAM_TIMEOUT_MS,
             streamDeadlineAt: aiPayload.streamDeadlineAt,

@@ -618,7 +618,8 @@ export interface GenericPayload {
   requestTimeoutMs?: number;
   /**
    * OpenRouter and Anthropic (not Bedrock): stream the completion over SSE
-   * instead of waiting for a single JSON body. Defaults to true. Streaming attempts are bounded by
+   * instead of waiting for a single JSON body. Defaults to true for OpenRouter,
+   * false for Anthropic. Streaming attempts are bounded by
    * `streamTimeoutMs` (total) plus a per-useful-chunk stall timeout — NOT by
    * `requestTimeoutMs`, which only governs non-streaming attempts (default
    * 180s for OpenRouter). Set to false to force the old non-streaming path.
