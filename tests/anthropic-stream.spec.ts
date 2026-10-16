@@ -1,5 +1,5 @@
 /**
- * The streaming Anthropic transport (opt-in via streaming: true): events are
+ * The streaming Anthropic transport (default since 1.0.128): events are
  * rebuilt into the non-streaming body, so text, thinking (with signature) and
  * tool_use input come back exactly as before. Plus the request shape and the
  * stall guard. global.fetch is mocked — no network/keys/cost.
@@ -76,7 +76,6 @@ const payload = (extra: Partial<GenericPayload> = {}): GenericPayload =>
     reasoningEffort: "low",
     messages: [{ role: "user", content: "compute 1+1" }],
     functions: [{ name: "execute_code", description: "run", parameters: { type: "object", properties: { code: { type: "string" } } } }],
-    streaming: true,
     ...extra,
   }) as GenericPayload;
 
