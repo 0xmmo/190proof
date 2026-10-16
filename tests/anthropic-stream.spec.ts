@@ -92,6 +92,7 @@ test("rebuilds thinking, text and tool_use from the stream", async () => {
   expect(sent.max_tokens).toBe(64_000);
   expect(sent.thinking).toEqual({ type: "adaptive", display: "summarized" });
   expect(sent.output_config).toEqual({ effort: "low" });
+  expect(sent.tools[0].eager_input_streaming).toBe(true);
 
   expect(answer.content).toBe("好的，running it.");
   expect(answer.function_calls).toEqual([
@@ -165,4 +166,21 @@ test("an error event surfaces the API's message", async () => {
   await expect(
     callWithRetries(["test", "anthropic-stream"], payload(), undefined, 1),
   ).rejects.toThrow(/Overloaded/);
+});
+
+test("invalid eager tool JSON fails the attempt with a clear error", async () => {
+  global.fetch = jest.fn(async () =>
+    sseResponse([
+      START,
+      { type: "content_block_start", index: 0, content_block: { type: "tool_use", id: "toolu_1", name: "execute_code", input: {} } },
+      { type: "content_block_delta", index: 0, delta: { type: "input_json_delta", partial_json: '{"code": run_it' } },
+      { type: "content_block_stop", index: 0 },
+      { type: "message_delta", delta: { stop_reason: "tool_use" }, usage: { output_tokens: 5 } },
+      { type: "message_stop" },
+    ]),
+  ) as any;
+
+  await expect(
+    callWithRetries(["test", "anthropic-stream"], payload(), undefined, 1),
+  ).rejects.toThrow(/invalid tool input JSON for execute_code/);
 });

@@ -1040,7 +1040,20 @@ async function callAnthropicStream(
           case "content_block_stop": {
             const json = toolInputJson.get(event.index);
             if (json !== undefined) {
-              message.content[event.index].input = json ? JSON.parse(json) : {};
+              let input: any = {};
+              try {
+                if (json) input = JSON.parse(json);
+              } catch {
+                logger.error(
+                  id,
+                  "Anthropic stream: invalid tool input JSON:",
+                  json.slice(0, 200),
+                );
+                throw new Error(
+                  `Anthropic stream error: invalid tool input JSON for ${message.content[event.index].name}`,
+                );
+              }
+              message.content[event.index].input = input;
             }
             break;
           }
@@ -1289,6 +1302,17 @@ async function callAnthropic(
       // `thinking` unset and rely on the total deadline alone.
       if (payload.effort) {
         body.thinking = { type: "adaptive", display: "summarized" };
+      }
+      // Without eager input the API holds each tool parameter until it's
+      // complete, so a long execute_code `code` arg sends no events for >30s
+      // and trips the stall guard (prod 2026-10-15: Haiku stalled 5/5 retries
+      // on large code requests). Eager input isn't validated server-side;
+      // callAnthropicStream parses it at content_block_stop.
+      if (cachedTools?.length) {
+        body.tools = cachedTools.map((t) => ({
+          ...t,
+          eager_input_streaming: true,
+        }));
       }
       data = await callAnthropicStream(
         id,
