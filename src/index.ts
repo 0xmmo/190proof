@@ -368,6 +368,29 @@ function filterOpenAICompatReasoningDetails(details: any): any[] | undefined {
   return blocks.length ? blocks : undefined;
 }
 
+/**
+ * User turn appended when a conversation ends on a plain assistant message.
+ * Hosts that treat a trailing assistant message as a prefill make the model
+ * continue that text instead of answering — 2026-10-19, deepseek-v4.1 on
+ * Fireworks/InferenceNet/Wafer: junk, a verbatim system-prompt leak, 30k-130k-
+ * token runaways. "(continue)" replaced "...", which models read as the user
+ * typing "..." ("did you mean to ask something?") in about a third of replays.
+ */
+const TRAILING_ASSISTANT_PLACEHOLDER = "(continue)";
+
+/**
+ * OpenAI-compatible counterpart of the Anthropic/Google jigs' last step: end
+ * on a user turn, except after an assistant turn with tool calls (its results
+ * are still owed, and a user turn there would orphan them).
+ */
+function endOnUserTurn(messages: OpenAIMessage[]): OpenAIMessage[] {
+  const last = messages[messages.length - 1];
+  if (last?.role === "assistant" && !last.tool_calls?.length) {
+    return [...messages, { role: "user", content: TRAILING_ASSISTANT_PLACEHOLDER }];
+  }
+  return messages;
+}
+
 async function prepareOpenAIPayload(
   identifier: Identifier,
   payload: GenericPayload,
@@ -453,6 +476,7 @@ async function prepareOpenAIPayload(
     preparedPayload.messages.push(outMessage);
   }
 
+  preparedPayload.messages = endOnUserTurn(preparedPayload.messages);
   return preparedPayload;
 }
 
@@ -867,7 +891,7 @@ function jigAnthropicMessages(
   // unanswered tool_use turn (a text-only user can't satisfy it).
   const last = jiggedMessages[jiggedMessages.length - 1];
   if (last?.role === "assistant" && !hasToolBlock(last.content)) {
-    jiggedMessages.push({ role: "user", content: "..." });
+    jiggedMessages.push({ role: "user", content: TRAILING_ASSISTANT_PLACEHOLDER });
   }
 
   return jiggedMessages;
@@ -1511,10 +1535,10 @@ function jigGoogleMessages(messages: GoogleAIMessage[]): GoogleAIMessage[] {
 
   // Ensure last message is from user — but don't append a placeholder after a
   // model turn that ends in a functionCall (it would orphan the call into
-  // history and send "..." as the message).
+  // history and send the placeholder as the message).
   const last = jiggedMessages[jiggedMessages.length - 1];
   if (last?.role === "model" && !hasFunctionPart(last.parts)) {
-    jiggedMessages.push({ role: "user", parts: [{ text: "..." }] });
+    jiggedMessages.push({ role: "user", parts: [{ text: TRAILING_ASSISTANT_PLACEHOLDER }] });
   }
 
   return jiggedMessages;
@@ -2032,7 +2056,7 @@ function prepareOpenAICompatMessages(
     if (reasoningDetails) outMessage.reasoning_details = reasoningDetails;
     out.push(outMessage);
   }
-  return out;
+  return endOnUserTurn(out);
 }
 
 function prepareGroqPayload(payload: GenericPayload): GroqPayload {
